@@ -7,4 +7,5 @@ dist/*.pck
 *.tmp
 dist/
 client/server_target.gd
+client/server_target.gd.uid
 启动联机.cmd

@@ -56,6 +56,8 @@ func setup(player_specs: Array, p_config: Dictionary = {}) -> void:
             "disconnected": false,
             "last_card": "",
             "last_target": -1,
+            "ai_stall": 0,
+            "ai_last_hp": 10,
         })
     config = {
         "friendly_fire": bool(p_config.get("friendly_fire", false)),
@@ -1734,6 +1736,11 @@ func advance_round() -> Dictionary:
     if finished:
         return {"round": round_no, "events": events, "finished": true}
     round_no += 1
+    var any_hp_change := false
+    for pl in players:
+        if bool(pl["alive"]) and int(pl["hp_t"]) != int(pl["ai_last_hp"]):
+            any_hp_change = true
+            break
     for pl in players:
         if not pl["alive"]:
             continue
@@ -1742,6 +1749,11 @@ func advance_round() -> Dictionary:
             events.append({"t": "death", "pid": int(pl["pid"]),
                            "text": "%s 的亡灵返乡到期，再次死亡" % pl["name"]})
             continue
+        if any_hp_change:
+            pl["ai_stall"] = 0
+        else:
+            pl["ai_stall"] = int(pl["ai_stall"]) + 1
+        pl["ai_last_hp"] = int(pl["hp_t"])
         var keep: Array = []
         for s in pl["statuses"]:
             var typ := str(s.get("type", ""))
@@ -1803,153 +1815,522 @@ func advance_round() -> Dictionary:
 
 # ---------------------------------------------------------------- AI
 func ai_choose(pid: int, peek: Dictionary = {}) -> Dictionary:
-    var pl := _p(pid)
     var legal := legal_cards(pid)
     if legal.is_empty():
         return {"ok": false, "card": "", "reason": "无合法牌"}
-    var pids := alive_pids()
-    var enemies := alive_enemies(pid)
-    var best_id := ""
-    var best_score := -999999.0
+    var best: Dictionary = {}
+    var best_score := -1e9
+    var pool: Array = []
     for id in legal:
         var card := Cards.get_card(id)
         if card.is_empty():
             continue
-        var tlist := valid_targets(pid, id)
-        if tlist.is_empty() and str(card.get("target", "enemy")) != "all_enemies":
-            continue
-        var target := -1
-        if not tlist.is_empty():
-            target = int(tlist[0])
-            for tid in tlist:
-                var tp := _p(int(tid))
-                if str(card.get("target", "")) == "dead":
-                    target = int(tid)
-                    break
-                if tlist.size() > 0 and str(tp["team"]) != str(pl["team"]):
-                    if target < 0 or int(_p(target)["hp_t"]) > int(tp["hp_t"]):
-                        target = int(tid)
-        var score := _ai_score(pid, id, card, target, peek)
-        if score > best_score:
-            best_score = score
-            best_id = id
-    if best_id == "":
+        for v in _ai_variants(pid, id, card):
+            var target := int(v.get("target", -1))
+            var targets: Array = v.get("targets", [])
+            var check := can_use(pid, id, target, targets)
+            if not bool(check["ok"]):
+                continue
+            var chosen: Array = check.get("targets", [])
+            var t0 := int(chosen[0]) if chosen.size() > 0 else -1
+            var score := _ai_score(pid, id, card, t0, chosen, peek)
+            pool.append({"ok": true, "card": id, "target": t0, "targets": chosen, "score": score})
+            if score > best_score:
+                best_score = score
+                best = {"ok": true, "card": id, "target": t0, "targets": chosen}
+    if best.is_empty():
         return {"ok": false, "card": "", "reason": "无可用决策"}
-    var card2 := Cards.get_card(best_id)
-    var tlist2 := valid_targets(pid, best_id)
-    var target2 := -1
-    var targets2: Array = []
-    if str(card2.get("target", "")) == "all_enemies":
-        targets2 = tlist2
-    elif str(card2.get("target", "")) == "enemies2":
-        var es := opponents_for_targeting(pid)
-        es.sort_custom(func(x, y): return int(_p(int(x))["hp_t"]) < int(_p(int(y))["hp_t"]))
-        if es.size() >= 2 and _rng.randf() < 0.5:
-            targets2 = [es[0], es[1]]
-        else:
-            targets2 = [es[0]]
-        target2 = int(targets2[0])
-    elif not tlist2.is_empty():
-        target2 = int(tlist2[0])
-        if str(card2.get("target", "")) == "dead":
-            for d in dead_pids():
-                target2 = int(d)
-                break
-        elif str(card2.get("target", "")) in ["enemy", "any"]:
-            var e2 := opponents_for_targeting(pid)
-            if not e2.is_empty():
-                e2.sort_custom(func(x, y): return int(_p(int(x))["hp_t"]) < int(_p(int(y))["hp_t"]))
-                target2 = int(e2[0])
-            if str(card2.get("target", "")) == "any" and best_id in ["shield", "peach"]:
-                target2 = pid
-    var check := can_use(pid, best_id, target2, targets2)
-    if not bool(check["ok"]):
-        return {"ok": false, "card": "", "reason": str(check["reason"])}
-    return {"ok": true, "card": best_id, "target": target2, "targets": check["targets"]}
-
-
-func _ai_score(pid: int, id: String, card: Dictionary, target: int, peek: Dictionary) -> float:
     var pl := _p(pid)
-    var score := _rng.randf_range(0.0, 3.0)
-    var kind := str(card.get("kind", ""))
-    var hp := int(pl["hp_t"])
+    # 连续多回合无人掉血：随机换一张攻击，用不同伤害值打破互相抵消的死局。
+    if peek.is_empty() and int(pl.get("ai_stall", 0)) >= 2:
+        var atk: Array = []
+        for c in pool:
+            var cc := Cards.get_card(str(c["card"]))
+            if str(cc.get("kind", "")) == "attack" and str(c["card"]) != str(pl["last_card"]):
+                atk.append(c)
+        if not atk.is_empty():
+            return atk[_rng.randi_range(0, atk.size() - 1)]
+    # 无透视时在同档决策中随机挑选，避免双方镜像完全相同而长期互相抵消。
+    if peek.is_empty() and pool.size() > 1:
+        var near: Array = []
+        for c in pool:
+            if float(c["score"]) >= best_score - 6.0:
+                near.append(c)
+        if near.size() > 1:
+            return near[_rng.randi_range(0, near.size() - 1)]
+    return best
+
+
+func _ai_variants(pid: int, id: String, card: Dictionary) -> Array:
+    var out: Array = []
+    var es := alive_enemies(pid)
+    if id in ["wine", "undead_return"]:
+        # 复活只对己方死者使用
+        var team := int(_p(pid)["team"])
+        for d in dead_pids():
+            if int(_p(int(d))["team"]) == team:
+                out.append({"target": int(d), "targets": [int(d)]})
+        return out
+    match str(card.get("target", "enemy")):
+        "self":
+            out.append({"target": pid, "targets": [pid]})
+        "all_enemies":
+            if not es.is_empty():
+                out.append({"target": int(es[0]), "targets": es})
+        "dead":
+            for d in dead_pids():
+                out.append({"target": int(d), "targets": [int(d)]})
+        "enemies2":
+            for e in es:
+                out.append({"target": int(e), "targets": [int(e)]})
+            var se := es.duplicate()
+            se.sort_custom(func(x, y): return int(_p(int(x))["hp_t"]) < int(_p(int(y))["hp_t"]))
+            if se.size() >= 2:
+                out.append({"target": int(se[0]), "targets": [int(se[0]), int(se[1])]})
+                if se.size() >= 3:
+                    out.append({"target": int(se[0]), "targets": [int(se[0]), int(se[2])]})
+        _:
+            var pool: Array = []
+            if str(card.get("target", "enemy")) == "any":
+                pool = _ai_any_pool(pid, id)
+            else:
+                pool = es
+            for p in pool:
+                out.append({"target": int(p), "targets": [int(p)]})
+    return out
+
+
+func _ai_any_pool(pid: int, id: String) -> Array:
+    match id:
+        "shield", "peach":
+            var picked: Array = [pid]
+            picked.append_array(allies(pid))
+            return picked
+        "gather_damage", "raiden", "unequal", "borrow_body", "turtle", "god_turtle":
+            return alive_enemies(pid)
+    var fallback := alive_enemies(pid)
+    if fallback.is_empty():
+        fallback = alive_pids()
+    return fallback
+
+
+func _ai_score(pid: int, id: String, card: Dictionary, target: int, targets: Array, peek: Dictionary) -> float:
+    var pl := _p(pid)
     if round_no == 1:
         return 100.0 if id == "yun" else 0.0
+    var score := _rng.randf_range(0.0, 2.5)
+    var hp := int(pl["hp_t"])
+    var luck := int(pl["luck_t"])
+    var cost := effective_cost(pid, id)
+    var kind := str(card.get("kind", ""))
+    var enemies := alive_enemies(pid)
+    var low_hp := hp <= 4
     if kind == "attack" or id == "final_pinch":
-        var dmg := int(card.get("damage_t", 0))
-        if id == "final_pinch":
-            dmg = 14 if _history_matches(pl["history"], ["small_pinch", "super_pinch"]) else 9
-        if target >= 0:
-            var tgt := _p(target)
-            score += dmg * 3.0
-            if int(tgt["hp_t"]) <= dmg:
-                score += 40.0
-            if int(tgt["shield"]) > 0:
-                score -= 10.0
-            if int(tgt["hp_t"]) <= 10:
-                score += 15.0
-        if id in ["explode", "final_pinch", "super_pinch", "small_pinch", "poison", "six_god", "six_fly"]:
-            score += 8.0
-    elif kind == "defense":
-        score += 20.0 if hp <= 10 else 8.0
-        if id == "absorb":
-            score += 12.0
-        if id == "dodge":
+        score += _ai_attack_value(pid, id, card, targets, peek)
+    match id:
+        "yun":
             score += 14.0
-        if id == "awaken_zhongfang" or id == "new_awaken_zhongfang":
-            score += 10.0
-    elif kind == "buff":
-        if id == "shield":
-            score += 26.0 if int(pl["shield"]) == 0 else 10.0
-        elif id == "peach":
-            score += 18.0 if hp <= 15 else 6.0
-        elif id == "sunflower_luck":
-            score += 30.0
-        elif id == "sunflower":
-            score += 24.0
-        elif id == "strong_yun":
-            score += 16.0
-        elif id == "yun":
+            if luck <= 30:
+                score += 22.0
+            elif luck <= 50:
+                score += 10.0
+        "zhongfang":
+            score += 12.0 + (8.0 if low_hp else 0.0) + (5.0 if enemies.size() >= 3 else 0.0)
+        "absorb":
+            score += 16.0 + (10.0 if low_hp else 0.0)
+        "super_absorb":
+            score += 22.0 + (10.0 if low_hp else 0.0)
+        "dodge":
+            score += 17.0 + (10.0 if low_hp else 0.0)
+        "awaken_zhongfang":
+            score += 16.0 + (8.0 if low_hp else 0.0)
+        "new_awaken_zhongfang":
+            score += 23.0 + (10.0 if low_hp else 0.0)
+        "strong_yun":
+            score += 21.0 + (10.0 if low_hp else 0.0)
+        "amulet":
+            score += 13.0 + (8.0 if low_hp else 0.0)
+        "rewind":
+            score += 6.0 + (18.0 if low_hp else 0.0)
+        "small_pinch":
+            score += 4.0
+        "super_pinch":
+            score += 5.0
+        "explode":
+            score += 4.0
+        "nuke":
+            score += 5.0 if luck >= 30 else -8.0
+            if int(pl["history"].size()) >= 2 and cost >= 20:
+                score -= 8.0
+        "cannon":
+            if _has_buff(pl, "rage"):
+                score += 8.0
+        "six_god":
+            score += 5.0
+        "six_fly":
+            score += 5.0
+        "double_dart":
+            if targets.size() >= 2:
+                score += 5.0
+        "poison":
+            score += 4.0
+        "prism":
+            score += 3.0
+        "micro_dart":
+            score += 0.0
+        "shield":
+            score += 25.0 if int(pl["shield"]) == 0 else 7.0
+            if low_hp:
+                score += 8.0
+        "peach":
+            score += 8.0 + (14.0 if low_hp else 0.0)
+            if _ai_has_status(pl, ["sneak", "c4", "time"]):
+                score += 18.0
+        "peach_core":
+            score += 4.0
+        "peach_oath":
+            var heal := 5 * players.size()
+            score += 4.0 + float(heal) * 0.4
+            if low_hp:
+                score += 8.0
+        "purify":
             score += 8.0
-        else:
-            score += 10.0
-    elif kind == "control":
-        if id == "despise":
-            score += 28.0
-        elif id == "heart" or id == "negative_luck":
+            if _ai_has_status(pl, ["sneak", "c4", "time"]) or _has_buff(pl, "unequal") or low_hp:
+                score += 18.0
+        "sunflower":
+            score += 32.0 if not bool(pl["cost_half"]) and round_no <= 6 else 4.0
+        "sunflower_luck":
+            score += 20.0
+        "rage":
+            score += 18.0 if not _has_buff(pl, "rage") else 2.0
+        "safe_box":
+            score += 14.0 if not _has_buff(pl, "insurance") else 3.0
+        "sneak":
             score += 12.0
-        elif id == "soul_steal":
-            if target >= 0:
-                score += mini(40.0, float(_p(target)["luck_t"]) * 2.0)
-        else:
-            score += 8.0
-    elif kind == "revive":
-        score += 30.0 if not dead_pids().is_empty() else 0.0
-    elif kind == "code":
-        score += 35.0
-    elif kind == "dot":
-        score += 14.0
-    elif kind == "special":
-        score += 18.0
-    # combo finisher bias
-    var req: Array = card.get("requires", [])
-    if not req.is_empty() and _history_matches(pl["history"], req):
-        score += 45.0
-    # cheat peek: counter the known card
-    if not peek.is_empty():
-        var peek_id := str(peek.get("card", ""))
-        var peek_card := Cards.get_card(peek_id)
-        if not peek_card.is_empty():
-            var peek_dmg := int(peek_card.get("damage_t", 0))
-            if id == "zhongfang" and peek_card.get("block_by", []).has("中防"):
-                score += 60.0
-            if id in ["absorb", "super_absorb"] and peek_card.get("block_by", []).has("吸"):
-                score += 60.0
-            if id == "dodge" and _can_dodge(peek_card):
-                score += 55.0
-            if id in ["awaken_zhongfang", "new_awaken_zhongfang"] and peek_card.get("block_by", []).has("中防"):
-                score += 55.0
-            if kind == "attack" and peek_dmg > 0 and target >= 0:
-                if int(_p(target)["hp_t"]) <= peek_dmg:
-                    score += 20.0
+        "c4":
+            score += 14.0
+        "needle":
+            score += 6.0
+        "despise":
+            score += 32.0
+        "soul_steal":
+            score += 10.0
+        "heart":
+            score += 9.0
+        "negative_luck":
+            score += 10.0
+        "gather_damage":
+            score += 8.0 + float(enemies.size()) * 2.0
+        "unequal":
+            score += 26.0
+        "raiden":
+            score += 9.0 + (8.0 if low_hp else 0.0)
+        "duel":
+            score += 40.0
+        "death_note":
+            score += 46.0
+        "borrow_body":
+            score += 95.0
+        "wine":
+            score += 12.0
+        "undead_return":
+            score += 15.0
+        "turtle":
+            score += 18.0
+        "god_turtle":
+            score += 26.0
+        "suicide":
+            score -= 90.0
+        _:
+            if kind == "buff":
+                score += 10.0
+            elif kind == "control":
+                score += 8.0
+            elif kind == "defense":
+                score += 10.0
+            elif kind == "special":
+                score += 12.0
+            elif kind == "revive":
+                score += 28.0 if not dead_pids().is_empty() else 0.0
+            elif kind == "dot":
+                score += 12.0
+            elif kind == "code":
+                score += 25.0
+    score += _ai_target_score(pid, id, card, target, targets, peek)
+    score += _ai_combo_bonus(pl, id)
+    score += _ai_peek_score(pid, id, card, target, targets, peek)
+    if cost > 0 and int(pl["luck_t"]) - cost < 10:
+        score -= 4.0
+    # 前期保留运做经济：运不够时不要急着把仅有的一点运花在进攻上。
+    if peek.is_empty() and (kind == "attack" or id == "final_pinch") and cost > 0 and int(pl["luck_t"]) < 30:
+        score -= 15.0
+    if cost >= 50 and int(pl["luck_t"]) - cost < 20 and id not in ["borrow_body", "death_note", "unequal"]:
+        score -= 5.0
+    # 久战不下时逐步提高进攻倾向，避免双方长期互相抵消形成死局。
+    if peek.is_empty() and round_no > 8:
+        var push := float(round_no - 8) * 5.0
+        if kind == "attack" or id == "final_pinch":
+            score += push
+        elif kind == "defense":
+            score -= push * 0.5
     return score
+
+
+func _ai_attack_value(pid: int, id: String, card: Dictionary, targets: Array, peek: Dictionary) -> float:
+    var pl := _p(pid)
+    var es := alive_enemies(pid)
+    var total := 0
+    var bonus := 0.0
+    for tid in targets:
+        var t := int(tid)
+        if not is_alive(t):
+            continue
+        var d := _ai_damage_for(id, card, t, targets, pl) + int(card.get("true_t", 0))
+        total += d
+        var thp := int(_p(t)["hp_t"])
+        var tsh := int(_p(t)["shield"])
+        var need := maxi(1, int(card.get("shield_require", 0)))
+        if thp <= d:
+            if tsh >= need:
+                bonus += 8.0
+            else:
+                bonus += 45.0
+                if es.size() <= 1:
+                    bonus += 25.0
+        elif thp <= d + 3:
+            bonus += 8.0
+        bonus += clampf(float(6 - thp) * 0.8, 0.0, 4.0)
+    var v := float(total) * 2.2 + bonus
+    # 免费攻击伤害固定、且几乎人人可用，很容易被同伤害抵消或被廉价防御挡下，价值打折。
+    if effective_cost(pid, id) == 0:
+        v *= 0.35
+    # 能被零费/低价防御挡下的攻击，期望收益明显下降；真伤/代码杀等难以防御的技能更可靠。
+    var cheap_block := false
+    for b in card.get("block_by", []):
+        if str(b) in ["中防", "吸", "运", "小掐", "闪", "护身符", "酒", "强化运", "觉醒中防", "新·觉醒中防"]:
+            cheap_block = true
+            break
+    if cheap_block:
+        v *= 0.5
+    var cost_units := float(effective_cost(pid, id)) / 10.0
+    if cost_units > 0.0:
+        v += (float(total) / 10.0 / cost_units) * 2.5
+    if str(card.get("target", "")) in ["all_enemies", "enemies2"]:
+        v += float(es.size()) * 4.0
+    return v
+
+
+func _ai_damage_for(id: String, card: Dictionary, tgt: int, targets: Array, pl: Dictionary) -> int:
+    match id:
+        "poison":
+            return int(round(float(maxi(0, int(_p(tgt)["hp_t"]))) * 0.8))
+        "prism":
+            return 7
+        "final_pinch":
+            return 14 if _history_matches(pl["history"], ["small_pinch", "super_pinch"]) else 9
+        "double_dart":
+            return 21 if targets.size() <= 1 else 10
+        "sweep_earth":
+            return 10
+    return int(card.get("damage_t", 0))
+
+
+func _ai_target_score(pid: int, id: String, card: Dictionary, target: int, targets: Array, peek: Dictionary) -> float:
+    if target < 0:
+        return 0.0
+    var pl := _p(pid)
+    var tp := _p(target)
+    var v := 0.0
+    match id:
+        "shield":
+            if target != pid:
+                v -= 4.0
+            if int(tp["shield"]) > 0:
+                v -= 6.0
+            if int(tp["hp_t"]) <= 4:
+                v += 6.0
+        "peach":
+            if int(tp["hp_t"]) <= 4:
+                v += 12.0
+            if _ai_has_status(tp, ["sneak", "c4", "time"]):
+                v += 22.0
+            if target != pid:
+                v -= 2.0
+        "wine":
+            if int(tp["team"]) != int(pl["team"]):
+                v -= 70.0
+            else:
+                v += 24.0
+        "undead_return":
+            if int(tp["team"]) != int(pl["team"]):
+                v -= 70.0
+            else:
+                v += 34.0
+        "soul_steal":
+            v += float(int(tp["luck_t"])) * 1.1
+        "heart":
+            v += float(int(tp["luck_t"])) * 0.6
+        "negative_luck":
+            v += float(int(tp["luck_t"])) * 0.6
+        "despise":
+            v += float(int(tp["hp_t"])) * 0.25 + float(int(tp["luck_t"])) * 0.5
+        "unequal":
+            v += float(int(tp["hp_t"])) * 0.2 + float(int(tp["luck_t"])) * 0.8
+        "gather_damage":
+            v += clampf(float(20 - int(tp["hp_t"])) * 0.8, 0.0, 12.0)
+            if int(tp["shield"]) > 0:
+                v -= 4.0
+        "raiden":
+            if int(tp["team"]) == int(pl["team"]):
+                v -= 25.0
+            else:
+                v += clampf(float(20 - int(tp["hp_t"])) * 0.6, 0.0, 8.0)
+        "duel":
+            if int(tp["shield"]) <= 0:
+                v += 45.0
+            else:
+                v += 10.0
+            v += float(int(tp["hp_t"])) * 0.2
+        "death_note":
+            v += 25.0 + float(int(tp["hp_t"])) * 0.2 + float(int(tp["shield"])) * 4.0
+        "borrow_body":
+            if int(tp["team"]) == int(pl["team"]):
+                v -= 60.0
+            else:
+                v += 30.0 + float(int(tp["hp_t"])) * 0.3 + float(int(tp["shield"])) * 6.0
+        "turtle":
+            if int(tp["luck_t"]) >= 20:
+                v += 12.0
+            if int(tp["hp_t"]) >= 30:
+                v += 6.0
+        "god_turtle":
+            if int(tp["luck_t"]) >= 20:
+                v += 12.0
+            if int(tp["hp_t"]) >= 30:
+                v += 6.0
+    return v
+
+
+func _ai_peek_score(pid: int, id: String, card: Dictionary, target: int, targets: Array, peek: Dictionary) -> float:
+    if peek.is_empty():
+        return 0.0
+    var peek_id := str(peek.get("card", ""))
+    var pc := Cards.get_card(peek_id)
+    if pc.is_empty():
+        return 0.0
+    var from := int(peek.get("from", -1))
+    var ptarget := int(peek.get("target", -1))
+    var ptype := str(pc.get("target", ""))
+    var v := 0.0
+    var aimed_at_me := ptarget == pid or ptype == "all_enemies"
+    if aimed_at_me and _ai_defense_blocks(id, pc):
+        v += 32.0
+        if ptarget == pid and int(pc.get("damage_t", 0)) >= int(_p(pid)["hp_t"]):
+            v += 18.0
+    if from >= 0 and targets.has(from):
+        if ptype == "self" and _ai_defense_blocks(peek_id, card):
+            v -= 28.0
+        if id in ["small_pinch", "super_pinch", "final_pinch"] and peek_id == "explode":
+            v += 80.0
+        if id == "turtle" or id == "god_turtle":
+            v += 35.0 if id == "god_turtle" else 25.0
+            if str(pc.get("kind", "")) == "attack":
+                v += 10.0
+    elif ptarget >= 0 and targets.has(ptarget) and _ai_defense_blocks(peek_id, card):
+        v -= 20.0
+    if id == "explode" and ptarget == pid and peek_id in ["small_pinch", "super_pinch", "final_pinch"]:
+        v -= 70.0
+    if id == "death_note" and peek_id == "strong_yun" and ptarget >= 0 and targets.has(ptarget):
+        v -= 45.0
+    return v
+
+
+func _ai_defense_blocks(defense_id: String, incoming: Dictionary) -> bool:
+    var iid := str(incoming.get("id", ""))
+    var kind := str(incoming.get("kind", ""))
+    var block_by: Array = incoming.get("block_by", [])
+    match defense_id:
+        "zhongfang":
+            return block_by.has("中防")
+        "awaken_zhongfang":
+            return block_by.has("觉醒中防") or kind in ["attack", "dot"]
+        "new_awaken_zhongfang":
+            return block_by.has("中防") or block_by.has("觉醒中防") or iid in ["heart", "despise"]
+        "absorb":
+            return block_by.has("吸") or iid in ["yun", "strong_yun"]
+        "super_absorb":
+            return block_by.has("吸") or iid in ["yun", "strong_yun"]
+        "dodge":
+            return _can_dodge(incoming)
+        "amulet":
+            return int(incoming.get("cost_t", 0)) in [20, 30]
+        "strong_yun":
+            return kind in ["attack", "dot"]
+        "yun":
+            return block_by.has("运")
+        "small_pinch":
+            return iid == "explode"
+        "super_pinch":
+            return iid == "explode"
+        "final_pinch":
+            return iid == "explode"
+        "negative_luck":
+            return iid in ["dragon", "small_dart", "new_long_attack_scatter"] or block_by.has("负运")
+        "wine":
+            return kind in ["attack", "dot"] and int(incoming.get("damage_t", 0)) + int(incoming.get("true_t", 0)) <= 10
+    return false
+
+
+func _ai_combo_bonus(pl: Dictionary, id: String) -> float:
+    var best := 0.0
+    var hist: Array = pl["history"]
+    for c in Cards.all().values():
+        var req: Array = c.get("requires", [])
+        if req.size() < 2:
+            continue
+        var power := _ai_finisher_power(str(c["id"]))
+        if power <= 0.0:
+            continue
+        for k in req.size():
+            if str(req[k]) != id:
+                continue
+            if not _history_matches(hist, req.slice(0, k)):
+                continue
+            best = maxf(best, power / float(req.size() - k))
+    if id == "small_pinch" and not _history_matches(hist, ["small_pinch"]):
+        best = maxf(best, 6.0)
+    if id == "super_pinch" and _history_matches(hist, ["small_pinch"]):
+        best = maxf(best, 18.0)
+    if id == "final_pinch" and _history_matches(hist, ["small_pinch", "super_pinch"]):
+        best = maxf(best, 20.0)
+    return best
+
+
+func _ai_finisher_power(id: String) -> float:
+    match id:
+        "turtle":
+            return 26.0
+        "god_turtle":
+            return 40.0
+        "sunflower":
+            return 30.0
+        "sunflower_luck":
+            return 22.0
+        "unequal":
+            return 26.0
+        "dragon":
+            return 8.0
+        "dive":
+            return 10.0
+        "dragon_heaven":
+            return 12.0
+        "nuke":
+            return 16.0
+    return 0.0
+
+
+func _ai_has_status(pl: Dictionary, kinds: Array) -> bool:
+    for s in pl["statuses"]:
+        if kinds.has(str(s.get("type", ""))):
+            return true
+    return false

@@ -641,7 +641,7 @@ func _local_play(auto: bool, tlist: Array = []) -> void:
                     engine.submit(0, str(lg[0]), int(ts[0]) if ts.size() > 0 else -1, ts)
     var peek := {}
     if App.local_cheat and manual_card != "":
-        peek = {"card": manual_card}
+        peek = {"card": manual_card, "from": 0, "target": int(tlist[0]) if not tlist.is_empty() else -1}
     if engine.needs_choice(App.local_ai_pid) and not engine.choices.has(App.local_ai_pid):
         var ai := engine.ai_choose(App.local_ai_pid, peek)
         if bool(ai.get("ok", false)):

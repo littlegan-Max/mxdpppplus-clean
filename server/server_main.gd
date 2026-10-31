@@ -592,7 +592,7 @@ func _human_peek(battle: Dictionary) -> Dictionary:
         if engine.choices.has(int(pid)):
             var ch: Dictionary = engine.choices[int(pid)]
             if not bool(ch.get("pass", true)) and str(ch.get("card", "")) != "":
-                return {"card": str(ch["card"]), "target": int(ch.get("target", -1))}
+                return {"card": str(ch["card"]), "target": int(ch.get("target", -1)), "from": int(pid)}
     return {}
 
 

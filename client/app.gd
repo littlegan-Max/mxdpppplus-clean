@@ -68,11 +68,29 @@ func setup_client() -> void:
     root.theme = UIKit.make_theme()
     ui_layer.add_child(root)
     current_screen = root
+    if OS.has_feature("mobile"):
+        _apply_mobile_safe_area(root)
+        get_viewport().size_changed.connect(func(): _apply_mobile_safe_area(root))
     Net.msg_received.connect(_on_net_message)
     Net.connected_to_server.connect(_on_connected)
     Net.connection_failed.connect(_on_connect_failed)
     Net.server_disconnected.connect(_on_server_disconnected)
     _show("connect")
+
+
+func _apply_mobile_safe_area(root: Control) -> void:
+    # 手机横屏时把界面整体右移，避开左侧摄像头/挖孔。
+    var scr := DisplayServer.screen_get_size()
+    var safe := DisplayServer.get_display_safe_area()
+    var ratio := 0.0
+    if scr.x > 0 and safe.size.x > 0:
+        ratio = clampf(float(safe.position.x) / float(scr.x), 0.0, 0.12)
+    var view_w := float(get_viewport().get_visible_rect().size.x)
+    if view_w <= 0.0:
+        view_w = 1920.0
+    var inset := maxf(view_w * ratio, view_w * 0.028)
+    UIKit.safe_left = inset
+    root.offset_left = inset
 
 
 func _show(screen_name: String) -> void:

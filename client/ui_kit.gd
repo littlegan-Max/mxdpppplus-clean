@@ -12,6 +12,7 @@ const DARK := Color("#0b0618")
 const PURPLE := Color("#24104a")
 
 static var _theme: Theme = null
+static var safe_left := 0.0
 
 
 static func art(path: String) -> Texture2D:
@@ -95,6 +96,8 @@ static func bg(parent: Control, path: String = "bg_lobby.png") -> TextureRect:
     tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
     tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
     tr.set_anchors_preset(Control.PRESET_FULL_RECT)
+    if safe_left > 0.0:
+        tr.offset_left = -safe_left
     tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
     parent.add_child(tr)
     return tr
@@ -104,6 +107,8 @@ static func dim(parent: Control, alpha: float = 0.55) -> ColorRect:
     var c := ColorRect.new()
     c.color = Color(0.03, 0.02, 0.07, alpha)
     c.set_anchors_preset(Control.PRESET_FULL_RECT)
+    if safe_left > 0.0:
+        c.offset_left = -safe_left
     c.mouse_filter = Control.MOUSE_FILTER_IGNORE
     parent.add_child(c)
     return c

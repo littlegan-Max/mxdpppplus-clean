@@ -9,6 +9,9 @@ var hwid_peer: Dictionary = {}     # hwid -> peer_id
 var rooms: Dictionary = {}         # room_id -> room
 var battles: Dictionary = {}       # room_id -> battle session
 var pending_invites: Dictionary = {}  # hwid -> invite
+var invite_all_at: Dictionary = {}    # hwid -> 上次一键邀请时间戳（冷却用）
+
+const INVITE_ALL_COOLDOWN_MS := 5000
 
 
 func _ready() -> void:
@@ -35,6 +38,7 @@ func _on_peer_disconnected(peer: int) -> void:
         _auto_pilot_or_remove(room, peer, hwid)
     _broadcast_friend_updates(hwid)
     _push_rooms()
+    _push_online()
 
 
 func _acc(peer: int) -> Dictionary:
@@ -129,6 +133,8 @@ func on_client_message(peer: int, data: Dictionary) -> void:
             _handle_friend_invite(peer, data)
         "invite_respond":
             _handle_invite_respond(peer, data)
+        "invite_all":
+            _handle_invite_all(peer)
         "battle_choose":
             _handle_battle_choose(peer, data)
         _:
@@ -154,6 +160,7 @@ func _handle_hello(peer: int, data: Dictionary) -> void:
     _send_pending_invite(peer, hwid)
     _broadcast_friend_updates(hwid)
     _push_rooms()
+    _push_online()
 
 
 func _handle_set_name(peer: int, data: Dictionary) -> void:
@@ -810,6 +817,12 @@ func _push_rooms() -> void:
         _send(int(peer), {"t": "rooms", "rooms": _public_rooms()})
 
 
+func _push_online() -> void:
+    var count := online.size()
+    for peer in online.keys():
+        _send(int(peer), {"t": "online", "count": count})
+
+
 func _handle_room_kick(peer: int, data: Dictionary) -> void:
     var room := _room_of_peer(peer)
     if room.is_empty():
@@ -950,6 +963,65 @@ func _handle_friend_invite(peer: int, data: Dictionary) -> void:
     if tp > 0:
         _send(tp, {"t": "invite", "room_id": str(room["id"]),
                    "from_name": str(acc.get("name", "")), "from_hwid": str(acc["hwid"])})
+    _push_rooms()
+
+
+func _handle_invite_all(peer: int) -> void:
+    var acc := _acc(peer)
+    if acc.is_empty():
+        return
+    var hwid := str(acc["hwid"])
+    var now := Time.get_ticks_msec()
+    var last := int(invite_all_at.get(hwid, 0))
+    if last > 0 and now - last < INVITE_ALL_COOLDOWN_MS:
+        var wait := int(ceil(float(INVITE_ALL_COOLDOWN_MS - (now - last)) / 1000.0))
+        _err(peer, "邀请冷却中，请 %d 秒后再试" % maxi(wait, 1))
+        return
+    var room := _room_of_peer(peer)
+    if room.is_empty():
+        room = _create_inviter_room(peer, acc)
+    elif int(room["host_peer"]) != peer:
+        if str(room["state"]) != "lobby":
+            _err(peer, "对局进行中不能邀请")
+            return
+        _remove_member(room, peer, "leave")
+        room = _create_inviter_room(peer, acc)
+    if str(room["state"]) != "lobby":
+        _err(peer, "对局进行中不能邀请")
+        return
+    if room["members"].size() >= int(room["max_players"]):
+        _err(peer, "房间已满")
+        return
+    invite_all_at[hwid] = now
+    var inv := {
+        "room_id": str(room["id"]),
+        "from_hwid": hwid,
+        "from_name": str(acc.get("name", "")),
+        "created": now,
+    }
+    var sent := 0
+    for op in online.keys():
+        var other := int(op)
+        if other == peer:
+            continue
+        if not online.has(other):
+            continue
+        var in_room := false
+        for m in room["members"]:
+            if int(m["peer"]) == other:
+                in_room = true
+                break
+        if in_room:
+            continue
+        var oacc := _acc(other)
+        var ohwid := str(oacc.get("hwid", ""))
+        if ohwid == "" or ohwid == hwid:
+            continue
+        pending_invites[ohwid] = inv
+        _send(other, {"t": "invite", "room_id": str(room["id"]),
+                      "from_name": str(acc.get("name", "")), "from_hwid": hwid})
+        sent += 1
+    _send(peer, {"t": "invite_all_ok", "count": sent})
     _push_rooms()
 
 

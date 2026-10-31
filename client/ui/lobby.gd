@@ -4,6 +4,7 @@ var room_list: VBoxContainer
 var empty_label: Label
 var join_edit: LineEdit
 var refresh_btn: Button
+var online_label: Label
 var create_layer: CanvasLayer
 var public_check: CheckBox
 var max_spin: SpinBox
@@ -19,6 +20,7 @@ func _ready() -> void:
     _build()
     App.send({"t": "rooms_list"})
     on_rooms(App.rooms)
+    on_online(App.online_count)
 
 
 func _build() -> void:
@@ -40,6 +42,8 @@ func _build() -> void:
     var sp := Control.new()
     sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     head.add_child(sp)
+    online_label = UIKit.label("在线 0 人", 18, UIKit.CYAN)
+    head.add_child(online_label)
     refresh_btn = UIKit.small_button("刷新", 120, 52, 20)
     refresh_btn.pressed.connect(func(): App.send({"t": "rooms_list"}))
     head.add_child(refresh_btn)
@@ -109,6 +113,11 @@ func _build() -> void:
     var create_btn := UIKit.button("创建房间", 0, 70, 26)
     create_btn.pressed.connect(_open_create)
     cv.add_child(create_btn)
+
+
+func on_online(count: int) -> void:
+    if online_label != null:
+        online_label.text = "在线 %d 人" % count
 
 
 func on_rooms(list: Array) -> void:

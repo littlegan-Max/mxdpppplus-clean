@@ -7,6 +7,8 @@ var subtitle_label: Label
 var ready_btn: Button
 var start_btn: Button
 var invite_btn: Button
+var invite_all_btn: Button
+var _invite_cd_left := 0.0
 var public_check: CheckBox
 var ai_check: CheckBox
 var ff_check: CheckBox
@@ -24,6 +26,7 @@ func _ready() -> void:
     _build()
     room = App.room
     _render()
+    set_process(false)
 
 
 func _build() -> void:
@@ -119,6 +122,9 @@ func _build() -> void:
     invite_btn = UIKit.button("从好友列表邀请", 0, 54, 20)
     invite_btn.pressed.connect(_open_invite)
     bv.add_child(invite_btn)
+    invite_all_btn = UIKit.button("一键邀请在线所有人（冷却 5 秒）", 0, 54, 20)
+    invite_all_btn.pressed.connect(_invite_all)
+    bv.add_child(invite_all_btn)
 
     var actions := UIKit.hbox(14)
     actions.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -220,6 +226,7 @@ func _render() -> void:
     start_btn.disabled = humans.is_empty() or not all_ready or total_possible < 2
     start_btn.tooltip_text = "" if not start_btn.disabled else "需要全员准备且参战者≥2"
     invite_btn.disabled = humans.size() >= mx or str(room.get("state", "lobby")) != "lobby"
+    invite_all_btn.disabled = invite_btn.disabled or _invite_cd_left > 0.0
 
 
 func _rebuild_members(humans: Array, mx: int) -> void:
@@ -293,6 +300,32 @@ func _send_settings() -> void:
 func _leave() -> void:
     App.send({"t": "room_leave"})
     App.goto("lobby")
+
+
+func _invite_all() -> void:
+    if _invite_cd_left > 0.0:
+        return
+    App.send({"t": "invite_all"})
+    _invite_cd_left = 5.0
+    invite_all_btn.disabled = true
+    invite_all_btn.text = "冷却中… 5.0 秒"
+    set_process(true)
+
+
+func _process(delta: float) -> void:
+    if _invite_cd_left <= 0.0:
+        set_process(false)
+        return
+    _invite_cd_left = maxf(_invite_cd_left - delta, 0.0)
+    if invite_all_btn == null:
+        set_process(false)
+        return
+    if _invite_cd_left > 0.0:
+        invite_all_btn.text = "冷却中… %.1f 秒" % _invite_cd_left
+    else:
+        invite_all_btn.text = "一键邀请在线所有人（冷却 5 秒）"
+        set_process(false)
+        _render()
 
 
 func _open_invite() -> void:

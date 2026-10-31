@@ -5,6 +5,7 @@ var code_label: Label
 var rank_label: Label
 var rate_label: Label
 var friend_badge: Label
+var online_label: Label
 var avatar_rect: TextureRect
 
 
@@ -68,6 +69,8 @@ func _build() -> void:
         stat.text = "● 离线（仅单机）"
         stat.add_theme_color_override("font_color", UIKit.GREY)
     lv.add_child(stat)
+    online_label = UIKit.label("在线 0 人", 18, UIKit.GOLD, HORIZONTAL_ALIGNMENT_CENTER)
+    lv.add_child(online_label)
     var hint := UIKit.label("默认房间：公开 · 6 人 · 不补 AI · 10 秒", 16, UIKit.DIM, HORIZONTAL_ALIGNMENT_CENTER)
     lv.add_child(hint)
 
@@ -120,6 +123,7 @@ func _refresh() -> void:
     rank_label.text = Rank.label(rank)
     rate_label.text = Rank.win_rate_text(rank)
     avatar_rect.texture = UIKit.art("avatar_%d.png" % int(App.account.get("avatar", 0)))
+    online_label.text = "在线 %d 人" % App.online_count
     var reqs := App.friend_requests.size()
     friend_badge.visible = reqs > 0
     if reqs > 0:
@@ -151,6 +155,11 @@ func on_update_available(info: Dictionary) -> void:
 
 func on_friends(_list: Array) -> void:
     _refresh()
+
+
+func on_online(count: int) -> void:
+    if online_label != null:
+        online_label.text = "在线 %d 人" % count
 
 
 func toast(msg: String) -> void:

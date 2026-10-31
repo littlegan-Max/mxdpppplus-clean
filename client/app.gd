@@ -10,6 +10,7 @@ var friends: Array = []
 var friend_requests: Array = []
 var rooms: Array = []
 var room: Dictionary = {}
+var online_count := 0
 var invite: Dictionary = {}
 var battle_state: Dictionary = {}
 var battle_turn: Dictionary = {}
@@ -216,6 +217,13 @@ func _on_net_message(from_id: int, data: Dictionary) -> void:
             rooms = data.get("rooms", [])
             if active_screen and active_screen.has_method("on_rooms"):
                 active_screen.on_rooms(rooms)
+        "online":
+            online_count = int(data.get("count", 0))
+            if active_screen and active_screen.has_method("on_online"):
+                active_screen.on_online(online_count)
+        "invite_all_ok":
+            var invited := int(data.get("count", 0))
+            _toast("已向 %d 位在线玩家发送邀请" % invited if invited > 0 else "当前没有其他在线玩家")
         "room":
             room = data.get("room", {})
             if active_screen and active_screen.has_method("on_room"):

@@ -1,6 +1,6 @@
 extends Node
 
-## 检查更新：优先 GitHub，失败时依次尝试国内可直连的镜像/CDN。
+## 检查更新：优先国内可直连的 GitHub 代理/CDN，最后回退 GitHub 源站。
 ## version.json 与仓库默认分支同目录，内容形如
 ## {"version":"1.0.1","url":"https://github.com/.../releases/latest","notes":"..."}
 
@@ -8,12 +8,14 @@ signal checked(result: Dictionary)
 
 const REPO_PATH := "littlegan-Max/mxdpppplus-clean"
 const FEEDS := [
-    "https://raw.githubusercontent.com/%s/master/version.json" % REPO_PATH,
+    # jsDelivr 国内可直连节点（实测无需梯子；testingcf 对未缓存文件直接回源）
+    "https://testingcf.jsdelivr.net/gh/%s@master/version.json" % REPO_PATH,
+    "https://fastly.jsdelivr.net/gh/%s@master/version.json" % REPO_PATH,
     "https://cdn.jsdelivr.net/gh/%s@master/version.json" % REPO_PATH,
-    "https://ghfast.top/https://raw.githubusercontent.com/%s/master/version.json" % REPO_PATH,
+    # GitHub 实时代理（偶发 DNS 不通，作为备用）
     "https://gh-proxy.com/https://raw.githubusercontent.com/%s/master/version.json" % REPO_PATH,
-    "https://ghproxy.net/https://raw.githubusercontent.com/%s/master/version.json" % REPO_PATH,
-    "https://gitcode.com/gh_mirrors/mx/mxdpppplus-clean/raw/master/version.json",
+    # 源站兜底
+    "https://raw.githubusercontent.com/%s/master/version.json" % REPO_PATH,
 ]
 
 var _idx := 0
@@ -26,7 +28,7 @@ var _req: HTTPRequest = null
 func _ensure_req() -> HTTPRequest:
     if _req == null:
         _req = HTTPRequest.new()
-        _req.timeout = 8.0
+        _req.timeout = 6.0
         add_child(_req)
         _req.request_completed.connect(_on_done)
     return _req
@@ -68,6 +70,7 @@ func _on_done(_result: int, code: int, _headers: PackedStringArray, body: Packed
                     "latest": latest,
                     "newer": _compare(latest, _current) > 0,
                     "url": str(d.get("url", "")),
+                    "download_base": str(d.get("download_base", "")),
                     "notes": str(d.get("notes", "")),
                     "source": _url,
                 })

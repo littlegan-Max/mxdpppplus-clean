@@ -145,12 +145,21 @@ func on_update_available(info: Dictionary) -> void:
     var body := "最新版本：%s\n当前版本：%s" % [str(info.get("latest", "")), App.app_version()]
     if note != "":
         body += "\n\n" + note
+    body += "\n\n点「确定」直接下载新版安装包（国内直连）"
     UIKit.confirm(self, "发现新版本", body,
         func():
-            var url := str(info.get("url", ""))
+            var url := _download_url(info)
             if url != "":
                 OS.shell_open(url),
         func(): pass)
+
+
+func _download_url(info: Dictionary) -> String:
+    var base := str(info.get("download_base", ""))
+    if base == "":
+        base = "https://gh-proxy.com/https://github.com/littlegan-Max/mxdpppplus-clean/releases/latest/download/"
+    var asset := "mxdpppplus.apk" if OS.get_name() == "Android" else "mxdpppplus.exe"
+    return base + asset
 
 
 func on_friends(_list: Array) -> void:

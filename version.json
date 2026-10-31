@@ -1,5 +1,6 @@
 {
   "version": "1.0.2",
   "url": "https://github.com/littlegan-Max/mxdpppplus-clean/releases/latest",
+  "download_base": "https://gh-proxy.com/https://github.com/littlegan-Max/mxdpppplus-clean/releases/latest/download/",
   "notes": "新增：大厅显示在线人数 · 房间内一键邀请在线所有人（5 秒冷却）"
 }

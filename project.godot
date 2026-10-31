@@ -6,7 +6,7 @@ config_version=5
 
 config/name="mxdpppplus"
 config/description="Pixel-art multiplayer card battle game"
-config/version="1.0.2"
+config/version="1.0.3"
 run/main_scene="res://boot.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"

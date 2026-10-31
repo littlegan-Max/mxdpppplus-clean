@@ -67,7 +67,7 @@ func on_account(account: Dictionary) -> void:
     var n := str(account.get("name", ""))
     if n != "":
         App.account = account
-        App.goto("menu")
+        App.goto("menu" if had_name else "lobby")
     else:
         confirm_btn.disabled = false
         status_label.text = "改名失败，请重试"

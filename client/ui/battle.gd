@@ -41,6 +41,18 @@ var end_layer: CanvasLayer = null
 var _card_buttons: Dictionary = {}
 var _slot_buttons: Array = []
 var _log_lines := 0
+## 回放：逐回合的出牌与关键事件；死因：pid -> {round, text}
+var _replay: Array = []
+var _death_log: Dictionary = {}
+var _round_seen: Dictionary = {}
+var _timer_hot := false
+var _replay_rows: Array = []
+var _replay_scroll: ScrollContainer = null
+var _replay_btn: Button = null
+var _replay_playing := false
+var _end_shown := false
+var _end_pending := false
+var _end_data: Dictionary = {}
 
 
 func _ready() -> void:
@@ -93,13 +105,16 @@ func _build_ui() -> void:
     margin.add_child(root)
 
     var top := PanelContainer.new()
-    top.add_theme_stylebox_override("panel", UIKit.make_style("panel_dark.png", 8, 12))
-    top.custom_minimum_size = Vector2(0, 66)
+    top.add_theme_stylebox_override("panel", UIKit.gilded_style(UIKit.FRAME, 14))
+    top.custom_minimum_size = Vector2(0, 68)
     root.add_child(top)
     var top_h := HBoxContainer.new()
-    top_h.add_theme_constant_override("separation", 18)
+    top_h.add_theme_constant_override("separation", 16)
     top.add_child(top_h)
+    top_h.add_child(UIKit.icon("duel", 30))
     round_label = UIKit.label("第 1 回合", 26, UIKit.GOLD)
+    round_label.add_theme_constant_override("outline_size", 6)
+    round_label.add_theme_color_override("font_outline_color", Color("#1a0b30"))
     top_h.add_child(round_label)
     var team_a := UIKit.label("A 队", 22, UIKit.CYAN)
     var team_b := UIKit.label("B 队", 22, UIKit.RED)
@@ -125,7 +140,8 @@ func _build_ui() -> void:
 
     var middle := PanelContainer.new()
     middle.custom_minimum_size = Vector2(0, 142)
-    middle.add_theme_stylebox_override("panel", UIKit.make_style("panel_dark.png", 8, 10))
+    middle.add_theme_stylebox_override("panel",
+        UIKit.flat_style(Color(0.04, 0.09, 0.125, 0.9), UIKit.FRAME_DIM, 1, 12, 12))
     root.add_child(middle)
     var mid_h := HBoxContainer.new()
     mid_h.add_theme_constant_override("separation", 12)
@@ -133,7 +149,8 @@ func _build_ui() -> void:
     var log_head := VBoxContainer.new()
     log_head.custom_minimum_size = Vector2(232, 0)
     log_head.add_child(UIKit.label("战 况", 22, UIKit.GOLD))
-    hint_label = UIKit.label("选择技能 → 选择目标 → 出牌", 15, UIKit.DIM)
+    log_head.add_child(UIKit.divider(0.4, 1.0))
+    hint_label = UIKit.label("选择技能 → 选择目标 → 出牌", 16, UIKit.DIM)
     hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     log_head.add_child(hint_label)
     mid_h.add_child(log_head)
@@ -142,7 +159,7 @@ func _build_ui() -> void:
     log_label.scroll_active = true
     log_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     log_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
-    log_label.add_theme_font_size_override("normal_font_size", 17)
+    log_label.add_theme_font_size_override("normal_font_size", UIKit.fs(17))
     log_label.add_theme_color_override("default_color", UIKit.DIM)
     mid_h.add_child(log_label)
 
@@ -154,7 +171,7 @@ func _build_ui() -> void:
     card_area_panel = PanelContainer.new()
     card_area_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     card_area_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
-    card_area_panel.add_theme_stylebox_override("panel", UIKit.make_style("panel_dark.png", 8, 8))
+    card_area_panel.add_theme_stylebox_override("panel", UIKit.gilded_style(UIKit.FRAME_DIM, 12))
     bottom.add_child(card_area_panel)
     var cards_v := VBoxContainer.new()
     cards_v.add_theme_constant_override("separation", 6)
@@ -162,6 +179,7 @@ func _build_ui() -> void:
     var filter_h := HBoxContainer.new()
     filter_h.add_theme_constant_override("separation", 10)
     cards_v.add_child(filter_h)
+    filter_h.add_child(UIKit.icon("star", 24))
     filter_h.add_child(UIKit.label("技能库", 20, UIKit.GOLD))
     var filter := OptionButton.new()
     filter.add_item("全部")
@@ -193,6 +211,7 @@ func _build_ui() -> void:
     card_scroll.add_child(card_grid)
 
     detail_panel = PanelContainer.new()
+    detail_panel.add_theme_stylebox_override("panel", UIKit.gilded_style())
     detail_panel.custom_minimum_size = Vector2(540, 0)
     detail_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
     bottom.add_child(detail_panel)
@@ -200,6 +219,7 @@ func _build_ui() -> void:
     detail_box.add_theme_constant_override("separation", 10)
     detail_panel.add_child(detail_box)
     detail_box.add_child(UIKit.label("技能详情", 20, UIKit.GOLD))
+    detail_box.add_child(UIKit.divider(0.35, 1.0))
     var detail_scroll := ScrollContainer.new()
     detail_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
     detail_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -209,6 +229,14 @@ func _build_ui() -> void:
     _detail_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     detail_scroll.add_child(_detail_content)
     play_button = UIKit.button("出 牌", 300, 72, 30)
+    play_button.add_theme_stylebox_override("normal",
+        UIKit.card_style(UIKit.FRAME, 16, 2, Color(0.1, 0.2, 0.24, 0.96)))
+    play_button.add_theme_stylebox_override("hover",
+        UIKit.card_style(UIKit.GOLD, 16, 3, Color(0.14, 0.26, 0.3, 1.0)))
+    play_button.add_theme_stylebox_override("pressed",
+        UIKit.card_style(UIKit.GOLD, 16, 3, Color(0.08, 0.16, 0.2, 1.0)))
+    play_button.add_theme_stylebox_override("disabled",
+        UIKit.card_style(Color("#6a5f7a"), 16, 2, Color(0.05, 0.06, 0.08, 0.8)))
     play_button.pressed.connect(_on_play)
     detail_box.add_child(play_button)
 
@@ -247,15 +275,16 @@ func _build_cards() -> void:
 func _make_card_button(id: String, card: Dictionary) -> Button:
     var b := Button.new()
     b.clip_contents = true
-    b.custom_minimum_size = Vector2(190, 118)
+    b.custom_minimum_size = Vector2(190, UIKit.fs(118))
     b.focus_mode = Control.FOCUS_NONE
-    b.add_theme_stylebox_override("normal", UIKit.make_style("card.png", 8, 8))
-    b.add_theme_stylebox_override("hover", UIKit.make_style("card_sel.png", 8, 8))
-    b.add_theme_stylebox_override("pressed", UIKit.make_style("card_sel.png", 8, 8))
-    b.add_theme_stylebox_override("disabled", UIKit.make_style("card_disabled.png", 8, 8))
+    b.add_theme_stylebox_override("normal", UIKit.card_style(UIKit.FRAME_DIM, 12, 1))
+    b.add_theme_stylebox_override("hover", UIKit.card_style(UIKit.FRAME, 12, 2, Color(0.085, 0.17, 0.21, 1.0)))
+    b.add_theme_stylebox_override("pressed", UIKit.card_style(UIKit.GOLD, 12, 2, Color(0.12, 0.22, 0.26, 1.0)))
+    b.add_theme_stylebox_override("disabled", UIKit.card_style(Color("#6b6178"), 12, 1, Color(0.04, 0.045, 0.06, 0.9)))
     b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
     b.tooltip_text = "%s\n费用：%s\n%s" % [card.get("name", ""), Cards.cost_label(card), card.get("desc", "")]
     b.pressed.connect(func(): _select_card(id))
+    UIKit._hover_lift(b)
     var m := MarginContainer.new()
     m.set_anchors_preset(Control.PRESET_FULL_RECT)
     m.add_theme_constant_override("margin_left", 10)
@@ -268,11 +297,17 @@ func _make_card_button(id: String, card: Dictionary) -> Button:
     v.add_theme_constant_override("separation", 2)
     v.mouse_filter = Control.MOUSE_FILTER_IGNORE
     m.add_child(v)
+    var name_h := HBoxContainer.new()
+    name_h.add_theme_constant_override("separation", 5)
+    name_h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    name_h.add_child(UIKit.icon(str(card.get("icon", "star")), 18))
     var name_l := UIKit.label(str(card.get("name", "")), 20, UIKit.WHITE)
     name_l.max_lines_visible = 1
+    name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     name_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
     name_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    v.add_child(name_l)
+    name_h.add_child(name_l)
+    v.add_child(name_h)
     var cost_h := HBoxContainer.new()
     cost_h.add_theme_constant_override("separation", 3)
     cost_h.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -302,11 +337,11 @@ func _refresh_cards() -> void:
         b.modulate = Color(1.0, 1.0, 1.0) if is_legal else Color(0.55, 0.5, 0.62, 1.0)
         if is_legal:
             if selected_card == id:
-                b.add_theme_stylebox_override("normal", UIKit.make_style("card_sel.png", 8, 8))
+                b.add_theme_stylebox_override("normal", UIKit.card_style(UIKit.GOLD, 12, 2, Color(0.12, 0.24, 0.28, 1.0)))
             else:
-                b.add_theme_stylebox_override("normal", UIKit.make_style("card.png", 8, 8))
+                b.add_theme_stylebox_override("normal", UIKit.card_style(UIKit.FRAME_DIM, 12, 1))
         if selected_card == id and is_legal:
-            b.add_theme_stylebox_override("normal", UIKit.make_style("card_sel.png", 8, 8))
+            b.add_theme_stylebox_override("normal", UIKit.card_style(UIKit.GOLD, 12, 2, Color(0.12, 0.24, 0.28, 1.0)))
 
 
 func _rebuild_players() -> void:
@@ -323,12 +358,12 @@ func _rebuild_players() -> void:
         b.custom_minimum_size = Vector2(0, 180)
         b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         b.focus_mode = Control.FOCUS_NONE
-        var team_style := "panel_cyan.png" if team == 0 else "panel_red.png"
+        var team_color := UIKit.CYAN if team == 0 else UIKit.RED
         var is_targeted := selected_targets.has(pid)
-        var style_path := "panel.png" if is_targeted else team_style
-        b.add_theme_stylebox_override("normal", UIKit.make_style(style_path, 8, 10))
-        b.add_theme_stylebox_override("hover", UIKit.make_style(style_path, 8, 10))
-        b.add_theme_stylebox_override("pressed", UIKit.make_style(style_path, 8, 10))
+        var accent: Color = UIKit.GOLD if is_targeted else team_color
+        b.add_theme_stylebox_override("normal", UIKit.card_style(accent, 14, 3 if is_targeted else 2))
+        b.add_theme_stylebox_override("hover", UIKit.card_style(accent.lightened(0.18), 14, 3))
+        b.add_theme_stylebox_override("pressed", UIKit.card_style(accent.darkened(0.08), 14, 3))
         b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
         if not bool(pl.get("alive", true)):
             b.modulate = Color(0.55, 0.5, 0.6, 0.8)
@@ -356,6 +391,7 @@ func _rebuild_players() -> void:
         nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
         head.add_child(nm)
+        head.add_child(UIKit.label("A" if team == 0 else "B", 15, team_color))
         if pid == you_pid:
             head.add_child(UIKit.label("你", 16, UIKit.GOLD))
         v.add_child(head)
@@ -374,8 +410,8 @@ func _rebuild_players() -> void:
         state_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
         state_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
         if not bool(pl.get("alive", true)):
-            state_l.text = "阵亡"
-            state_l.add_theme_color_override("font_color", UIKit.GREY)
+            state_l.text = "☠ 阵亡"
+            state_l.add_theme_color_override("font_color", UIKit.RED)
         else:
             var bits: Array = []
             var sts: Array = pl.get("statuses", [])
@@ -493,6 +529,11 @@ func _select_card(id: String) -> void:
     _rebuild_players()
     _refresh_cards()
     _update_detail()
+    var picked: Button = _card_buttons.get(id)
+    if picked != null and is_instance_valid(picked):
+        picked.pivot_offset = picked.size * 0.5
+        picked.scale = Vector2(1.08, 1.08)
+        picked.create_tween().tween_property(picked, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
 func _on_player_slot(pid: int) -> void:
@@ -703,6 +744,17 @@ func _process(_delta: float) -> void:
         return
     var left := (turn_deadline - Time.get_ticks_msec()) / 1000.0
     timer_label.text = "⏱ %.1f" % maxf(0.0, left)
+    if left <= 3.0 and left > 0.0:
+        if not _timer_hot:
+            _timer_hot = true
+            timer_label.add_theme_color_override("font_color", UIKit.RED)
+        var k := 1.0 + 0.09 * absf(sin(Time.get_ticks_msec() * 0.008))
+        timer_label.pivot_offset = timer_label.size * 0.5
+        timer_label.scale = Vector2(k, k)
+    elif _timer_hot:
+        _timer_hot = false
+        timer_label.add_theme_color_override("font_color", UIKit.GOLD)
+        timer_label.scale = Vector2.ONE
     if left <= 0.0:
         timer_label.text = "结算中…"
         if mode == "local" and not _local_busy:
@@ -741,7 +793,7 @@ func on_reveal(data: Dictionary) -> void:
 
 
 func on_battle_end(data: Dictionary) -> void:
-    _show_end(data)
+    _schedule_end(data)
 
 
 func _on_reveal(result: Dictionary) -> void:
@@ -750,14 +802,116 @@ func _on_reveal(result: Dictionary) -> void:
     selected_targets = []
     _refresh_cards()
     _update_detail()
+    var old: Array = players.duplicate(true)
+    var pre_hp: Dictionary = result.get("pre_hp", {})
     _apply_players_only(result.get("players", players))
+    _record_round(result)
+    _animate_reveal(old, pre_hp)
     round_label.text = "第 %d 回合 · 结算" % int(result.get("round", round_no))
     _append_events(result.get("events", []), false)
     _show_reveal_modal(result)
     if bool(result.get("finished", false)):
-        var end_data := {"winner_team": int(result.get("winner_team", -1)),
-                         "players": result.get("players", players)}
-        _show_end(end_data)
+        _schedule_end({"winner_team": int(result.get("winner_team", -1)),
+                       "players": result.get("players", players)})
+
+
+## 结算面板延迟弹出，让伤害飘字与阵亡闪屏先播完。
+func _schedule_end(data: Dictionary) -> void:
+    if _end_shown:
+        return
+    _end_data = data
+    if _end_pending:
+        return
+    _end_pending = true
+    await get_tree().create_timer(1.0).timeout
+    _end_pending = false
+    if _end_shown:
+        return
+    _show_end(_end_data)
+
+
+## 逐回合记录出牌与关键事件，同时推导每位玩家的死因。
+func _record_round(result: Dictionary) -> void:
+    var rn := int(result.get("round", round_no))
+    if _round_seen.has(rn):
+        return
+    _round_seen[rn] = true
+    _replay.append({
+        "round": rn,
+        "choices": result.get("choices", []).duplicate(true),
+        "events": result.get("events", []).duplicate(true),
+    })
+    var last_hit := {}
+    for e in result.get("events", []):
+        if not (e is Dictionary):
+            continue
+        var t := str(e.get("t", ""))
+        var pid := int(e.get("pid", -1))
+        if pid < 0:
+            continue
+        if t == "damage":
+            last_hit[pid] = str(e.get("text", ""))
+        elif t == "died":
+            var prev: Dictionary = _death_log.get(pid, {})
+            if int(prev.get("round", -1)) < rn:
+                _death_log[pid] = {"round": rn, "cause": str(e.get("cause", "")),
+                                   "text": str(e.get("text", "")),
+                                   "hit": str(last_hit.get(pid, ""))}
+        elif t == "death":
+            # 代码杀/特殊死亡优先覆盖同回合的「阵亡」记录。
+            _death_log[pid] = {"round": rn, "cause": str(e.get("cause", "")),
+                               "text": str(e.get("text", "")),
+                               "hit": str(last_hit.get(pid, ""))}
+
+
+## 掉血飘字 + 受击抖动；有人阵亡时整屏闪红。
+func _animate_reveal(old: Array, pre_hp: Dictionary) -> void:
+    for i in players.size():
+        var pl: Dictionary = players[i]
+        var pid := int(pl.get("pid", 0))
+        var before := int(pl.get("hp_t", 0))
+        if pre_hp.has(pid) or pre_hp.has(str(pid)):
+            before = int(pre_hp.get(pid, pre_hp.get(str(pid), before)))
+        else:
+            for op in old:
+                if int(op.get("pid", 0)) == pid:
+                    before = int(op.get("hp_t", before))
+                    break
+        var after := int(pl.get("hp_t", before))
+        var anchor: Button = _slot_buttons[i] if i < _slot_buttons.size() else null
+        if anchor == null or not is_instance_valid(anchor):
+            continue
+        if after < before:
+            UIKit.float_text(self, "-%s" % Cards.fmt_t(before - after), anchor, UIKit.RED)
+            UIKit.shake(anchor, 0.06)
+        elif after > before:
+            UIKit.float_text(self, "+%s" % Cards.fmt_t(after - before), anchor, UIKit.CYAN)
+    var died_now := false
+    for i in players.size():
+        var pl: Dictionary = players[i]
+        if bool(pl.get("alive", true)):
+            continue
+        for op in old:
+            if int(op.get("pid", 0)) == int(pl.get("pid", 0)) and bool(op.get("alive", true)):
+                died_now = true
+                break
+        if died_now:
+            break
+    if died_now:
+        _flash_death()
+
+
+func _flash_death() -> void:
+    var c := ColorRect.new()
+    c.color = Color(0.7, 0.06, 0.14, 1.0)
+    c.set_anchors_preset(Control.PRESET_FULL_RECT)
+    c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    c.modulate.a = 0.0
+    add_child(c)
+    var tw := c.create_tween()
+    tw.tween_property(c, "modulate:a", 0.55, 0.08)
+    tw.tween_property(c, "modulate:a", 0.0, 0.55)
+    tw.tween_callback(c.queue_free)
 
 
 func _apply_players_only(p: Array) -> void:
@@ -776,9 +930,11 @@ func _show_reveal_modal(result: Dictionary) -> void:
     var shade := ColorRect.new()
     shade.color = Color(0.02, 0.01, 0.05, 0.55)
     shade.set_anchors_preset(Control.PRESET_FULL_RECT)
+    shade.modulate.a = 0.0
     reveal_layer.add_child(shade)
     var p := UIKit.panel()
     p.theme = UIKit.make_theme()
+    p.add_theme_stylebox_override("panel", UIKit.gilded_style(UIKit.FRAME, 18))
     p.custom_minimum_size = Vector2(1080, 560)
     p.set_anchors_preset(Control.PRESET_CENTER)
     p.position = Vector2(-540, -280)
@@ -817,6 +973,9 @@ func _show_reveal_modal(result: Dictionary) -> void:
         if reveal_layer != null and is_instance_valid(reveal_layer):
             reveal_layer.queue_free())
     v.add_child(close)
+    UIKit.pop_in(p)
+    var tw := reveal_layer.create_tween()
+    tw.tween_property(shade, "modulate:a", 1.0, 0.18)
     var auto := get_tree().create_timer(2.1)
     auto.timeout.connect(func():
         if reveal_layer != null and is_instance_valid(reveal_layer):
@@ -870,49 +1029,110 @@ func _on_leave() -> void:
 
 
 func _show_end(data: Dictionary) -> void:
+    if _end_shown:
+        return
+    _end_shown = true
     if end_layer != null and is_instance_valid(end_layer):
         end_layer.queue_free()
     if reveal_layer != null and is_instance_valid(reveal_layer):
         reveal_layer.queue_free()
+    var end_players: Array = data.get("players", players)
+    var winner := int(data.get("winner_team", -1))
     end_layer = CanvasLayer.new()
     end_layer.layer = 90
     add_child(end_layer)
     var shade := ColorRect.new()
     shade.color = Color(0.02, 0.01, 0.05, 0.82)
     shade.set_anchors_preset(Control.PRESET_FULL_RECT)
+    shade.modulate.a = 0.0
     end_layer.add_child(shade)
     var p := UIKit.panel()
     p.theme = UIKit.make_theme()
-    p.custom_minimum_size = Vector2(760, 480)
+    p.add_theme_stylebox_override("panel", UIKit.gilded_style(UIKit.FRAME, 20))
+    p.custom_minimum_size = Vector2(1040, 840)
     p.set_anchors_preset(Control.PRESET_CENTER)
-    p.position = Vector2(-380, -240)
+    p.position = Vector2(-520, -420)
     end_layer.add_child(p)
-    var v := UIKit.vbox(16)
+    var v := UIKit.vbox(8)
     p.add_child(v)
-    var winner := int(data.get("winner_team", -1))
+
     var title_text := "A 队胜利" if winner == 0 else ("B 队胜利" if winner == 1 else "对局结束")
-    v.add_child(UIKit.title(title_text, 52, UIKit.GOLD))
+    v.add_child(UIKit.title(title_text, 54, UIKit.GOLD))
     var my_team := 0
-    var pl := _player(you_pid)
-    if not pl.is_empty():
-        my_team = int(pl.get("team", 0))
+    var me := _player(you_pid)
+    if not me.is_empty():
+        my_team = int(me.get("team", 0))
     if winner == my_team:
-        v.add_child(UIKit.label("你所在的队伍获胜", 26, UIKit.CYAN, HORIZONTAL_ALIGNMENT_CENTER))
+        v.add_child(UIKit.label("你所在的队伍获胜 · 共 %d 回合" % maxi(1, _replay.size()),
+            24, UIKit.CYAN, HORIZONTAL_ALIGNMENT_CENTER))
     else:
-        v.add_child(UIKit.label("你所在的队伍失败", 26, UIKit.RED, HORIZONTAL_ALIGNMENT_CENTER))
-    var grid := GridContainer.new()
-    grid.columns = 4
-    grid.add_theme_constant_override("h_separation", 12)
-    grid.add_theme_constant_override("v_separation", 8)
-    for pp in data.get("players", players):
-        var chip := UIKit.panel("panel_cyan.png" if int(pp.get("team", 0)) == 0 else "panel_red.png")
-        var cv := UIKit.vbox(2)
-        chip.add_child(cv)
-        cv.add_child(UIKit.label(str(pp.get("name", "?")), 16, UIKit.WHITE))
-        cv.add_child(UIKit.label("血 %s · 运 %s · 盾 %d" %
-            [Cards.fmt_t(int(pp.get("hp_t", 0))), Cards.fmt_t(int(pp.get("luck_t", 0))), int(pp.get("shield", 0))], 15, UIKit.DIM))
-        grid.add_child(chip)
-    v.add_child(grid)
+        v.add_child(UIKit.label("你所在的队伍失败 · 共 %d 回合" % maxi(1, _replay.size()),
+            24, UIKit.RED, HORIZONTAL_ALIGNMENT_CENTER))
+    v.add_child(UIKit.divider(0.45, 1.0))
+
+    # —— 阵亡原因 ——
+    var death_head := UIKit.hbox(8)
+    death_head.add_child(UIKit.icon("skull", 22))
+    death_head.add_child(UIKit.label("阵亡原因", 22, UIKit.GOLD))
+    death_head.add_child(UIKit.label("（按回合先后）", 15, UIKit.GREY))
+    v.add_child(death_head)
+    var death_panel := PanelContainer.new()
+    death_panel.add_theme_stylebox_override("panel",
+        UIKit.flat_style(Color(0.04, 0.085, 0.12, 0.9), UIKit.FRAME_DIM, 1, 10, 12))
+    death_panel.custom_minimum_size = Vector2(0, 104)
+    v.add_child(death_panel)
+    var death_log := RichTextLabel.new()
+    death_log.bbcode_enabled = true
+    death_log.scroll_active = true
+    death_log.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    death_log.add_theme_font_size_override("normal_font_size", UIKit.fs(18))
+    death_log.add_theme_color_override("default_color", UIKit.IVORY)
+    death_log.text = _death_text(end_players)
+    death_panel.add_child(death_log)
+
+    # —— 对局速览（回放） ——
+    var replay_head := UIKit.hbox(10)
+    replay_head.add_child(UIKit.icon("star", 22))
+    replay_head.add_child(UIKit.label("对局速览（回放）", 22, UIKit.GOLD))
+    var rsp := Control.new()
+    rsp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    replay_head.add_child(rsp)
+    _replay_btn = UIKit.small_button("▶ 快速回放", 190, 44, 18)
+    _replay_btn.pressed.connect(_play_replay)
+    replay_head.add_child(_replay_btn)
+    v.add_child(replay_head)
+
+    _replay_scroll = ScrollContainer.new()
+    _replay_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    _replay_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _replay_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    v.add_child(_replay_scroll)
+    var rows := UIKit.vbox(6)
+    rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _replay_scroll.add_child(rows)
+    _replay_rows.clear()
+    if _replay.is_empty():
+        rows.add_child(UIKit.label("本局没有可用的回放记录。", 18, UIKit.GREY,
+            HORIZONTAL_ALIGNMENT_CENTER))
+    for entry in _replay:
+        var row := PanelContainer.new()
+        row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        row.add_theme_stylebox_override("panel",
+            UIKit.flat_style(Color(0.05, 0.11, 0.15, 0.86), UIKit.FRAME_DIM, 1, 10, 10))
+        var rt := RichTextLabel.new()
+        rt.bbcode_enabled = true
+        rt.fit_content = true
+        rt.scroll_active = false
+        rt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        rt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        rt.add_theme_font_size_override("normal_font_size", UIKit.fs(17))
+        rt.add_theme_color_override("default_color", UIKit.DIM)
+        rt.text = _round_summary(entry)
+        row.add_child(rt)
+        rows.add_child(row)
+        _replay_rows.append(row)
+
+    v.add_child(UIKit.divider(0.35, 1.0))
     var h := HBoxContainer.new()
     h.alignment = BoxContainer.ALIGNMENT_CENTER
     h.add_theme_constant_override("separation", 16)
@@ -935,6 +1155,80 @@ func _show_end(data: Dictionary) -> void:
         menu2.pressed.connect(func(): App.leave_to_menu())
         h.add_child(menu2)
     v.add_child(h)
+
+    UIKit.pop_in(p)
+    var tw := end_layer.create_tween()
+    tw.tween_property(shade, "modulate:a", 1.0, 0.2)
+
+
+## 结算页的死因文本。
+func _death_text(end_players: Array) -> String:
+    var lines: Array = []
+    for pp in end_players:
+        var pid := int(pp.get("pid", 0))
+        if not _death_log.has(pid):
+            continue
+        var d: Dictionary = _death_log[pid]
+        var line := "[color=#ff5a6e][b]第 %d 回合 · %s[/b][/color]　%s" % [
+            int(d.get("round", 0)), str(pp.get("name", "?")), str(d.get("text", "阵亡"))]
+        var hit := str(d.get("hit", ""))
+        if hit != "":
+            line += "\n[color=#8f86a8]　└ %s[/color]" % hit
+        lines.append(line)
+    if lines.is_empty():
+        return "[color=#8f86a8]本局无人阵亡。[/color]"
+    return "\n".join(lines)
+
+
+## 单回合回放摘要（BBcode）。
+func _round_summary(entry: Dictionary) -> String:
+    var lines: Array = ["[color=#ffcc4d][b]第 %d 回合[/b][/color]" % int(entry.get("round", 0))]
+    for c in entry.get("choices", []):
+        var pl := _player(int(c.get("pid", 0)))
+        var shown := str(c.get("effective_card", ""))
+        if shown == "":
+            shown = str(c.get("card", ""))
+        var nm := "空过" if bool(c.get("pass", false)) or shown == "" else str(Cards.get_card(shown).get("name", shown))
+        var tgt := int(c.get("target", -1))
+        var tname := ""
+        if tgt >= 0:
+            var tp := _player(tgt)
+            if not tp.is_empty():
+                tname = " → " + str(tp.get("name", ""))
+        lines.append("　[color=#f3e9d2]%s[/color] 出 [color=#ffcc4d]%s[/color]%s" % [
+            str(pl.get("name", "?")), nm, tname])
+    for e in entry.get("events", []):
+        var t := str(e.get("t", ""))
+        if not (t in ["damage", "died", "death", "winner", "revive", "shield_block", "silence", "force"]):
+            continue
+        lines.append("　" + _color_event(e))
+    return "\n".join(lines)
+
+
+## 逐回合滚动播放回放。
+func _play_replay() -> void:
+    if _replay_playing or _replay_scroll == null or _replay_rows.is_empty():
+        return
+    if not is_instance_valid(_replay_scroll):
+        return
+    _replay_playing = true
+    if _replay_btn != null and is_instance_valid(_replay_btn):
+        _replay_btn.disabled = true
+        _replay_btn.text = "回放中…"
+    for row in _replay_rows:
+        if not is_instance_valid(row) or not is_instance_valid(_replay_scroll):
+            break
+        var y := maxf(0.0, row.position.y - 8.0)
+        var tw := create_tween()
+        tw.tween_property(_replay_scroll, "scroll_vertical", int(y), 0.3).set_trans(Tween.TRANS_SINE)
+        await tw.finished
+        row.modulate = Color(1.25, 1.18, 0.95, 1.0)
+        row.create_tween().tween_property(row, "modulate", Color(1, 1, 1, 1), 0.45)
+        await get_tree().create_timer(0.6).timeout
+    _replay_playing = false
+    if _replay_btn != null and is_instance_valid(_replay_btn):
+        _replay_btn.disabled = false
+        _replay_btn.text = "▶ 再次回放"
 
 
 func toast(msg: String) -> void:

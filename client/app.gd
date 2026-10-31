@@ -65,6 +65,8 @@ func _ready() -> void:
 
 
 func setup_client() -> void:
+    # 手机端整体放大字号，桌面保持 1.0。
+    UIKit.text_scale = 1.25 if OS.has_feature("mobile") else 1.0
     ui_layer = CanvasLayer.new()
     ui_layer.layer = 10
     add_child(ui_layer)
@@ -121,6 +123,7 @@ func _show(screen_name: String) -> void:
     screen.name = screen_name.capitalize()
     screen.set_anchors_preset(Control.PRESET_FULL_RECT)
     current_screen.add_child(screen)
+    UIKit.fade_in(screen, 0.22)
     active_screen = screen
     _screens[screen_name] = screen
 
@@ -194,7 +197,7 @@ func _on_net_message(from_id: int, data: Dictionary) -> void:
             if str(account.get("name", "")) == "":
                 goto("name")
             else:
-                goto("menu")
+                goto("lobby")
         "account":
             account = data.get("account", {})
             if active_screen and active_screen.has_method("on_account"):

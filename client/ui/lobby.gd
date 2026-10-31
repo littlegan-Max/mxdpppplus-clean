@@ -35,7 +35,7 @@ func _build() -> void:
     margin.add_child(root)
 
     var head := UIKit.hbox(14)
-    var back := UIKit.small_button("← 返回", 140, 52, 20)
+    var back := UIKit.small_button("← 个人中心", 180, 52, 20)
     back.pressed.connect(func(): App.goto("menu"))
     head.add_child(back)
     head.add_child(UIKit.label("多人联机 · 大厅", 34, UIKit.GOLD))
@@ -44,6 +44,9 @@ func _build() -> void:
     head.add_child(sp)
     online_label = UIKit.label("在线 0 人", 18, UIKit.CYAN)
     head.add_child(online_label)
+    var single_btn := UIKit.small_button("单人模式", 132, 52, 20)
+    single_btn.pressed.connect(func(): App.goto("single"))
+    head.add_child(single_btn)
     refresh_btn = UIKit.small_button("刷新", 120, 52, 20)
     refresh_btn.pressed.connect(func(): App.send({"t": "rooms_list"}))
     head.add_child(refresh_btn)
@@ -51,11 +54,13 @@ func _build() -> void:
     friends_btn.pressed.connect(func(): App.goto("friends"))
     head.add_child(friends_btn)
     root.add_child(head)
+    root.add_child(UIKit.divider(0.4, 1.0))
 
     var content := UIKit.hbox(16)
     content.size_flags_vertical = Control.SIZE_EXPAND_FILL
     root.add_child(content)
     var left := UIKit.panel()
+    left.add_theme_stylebox_override("panel", UIKit.gilded_style())
     left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     left.size_flags_vertical = Control.SIZE_EXPAND_FILL
     content.add_child(left)
@@ -80,6 +85,7 @@ func _build() -> void:
     content.add_child(right)
 
     var join_panel := UIKit.panel("panel_dark.png")
+    join_panel.add_theme_stylebox_override("panel", UIKit.gilded_style())
     right.add_child(join_panel)
     var jv := UIKit.vbox(10)
     join_panel.add_child(jv)
@@ -95,6 +101,7 @@ func _build() -> void:
     join_edit.text_submitted.connect(func(_t): _join_by_code())
 
     var create_panel := UIKit.panel()
+    create_panel.add_theme_stylebox_override("panel", UIKit.gilded_style())
     create_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
     right.add_child(create_panel)
     var cv := UIKit.vbox(12)
@@ -157,6 +164,7 @@ func _add_room_row(r: Dictionary) -> void:
     join.pressed.connect(func(): App.send({"t": "room_join", "room_id": str(r.get("id", ""))}))
     h.add_child(join)
     room_list.add_child(panel)
+    UIKit.fade_in(panel, 0.24, 0.04)
 
 
 func _join_by_code() -> void:

@@ -12,6 +12,10 @@ func _ready() -> void:
     Net.connection_failed.connect(_on_failed)
     Net.server_disconnected.connect(_on_disconnected)
     _build()
+    if Net.connected:
+        App.goto("lobby")
+    else:
+        call_deferred("_connect")
 
 
 func _build() -> void:
@@ -38,28 +42,28 @@ func _build() -> void:
     panel.add_child(outer)
     var v := UIKit.vbox(16)
     outer.add_child(v)
-    v.add_child(UIKit.title("选择模式", 38))
+    v.add_child(UIKit.title("正在进入大厅", 38))
     v.add_child(UIKit.label("账号由设备硬件码自动注册，无需密码。", 18, UIKit.DIM, HORIZONTAL_ALIGNMENT_CENTER))
 
-    status_label = UIKit.label("点「联机模式」自动连接服务器。", 18, UIKit.DIM, HORIZONTAL_ALIGNMENT_CENTER)
+    status_label = UIKit.label("正在连接服务器…", 18, UIKit.DIM, HORIZONTAL_ALIGNMENT_CENTER)
     status_label.custom_minimum_size = Vector2(0, 40)
     v.add_child(status_label)
 
     var bh := UIKit.hbox(16)
     bh.alignment = BoxContainer.ALIGNMENT_CENTER
-    connect_btn = UIKit.button("联机模式", 300, 66)
+    connect_btn = UIKit.button("重新连接", 300, 66)
     connect_btn.pressed.connect(_connect)
     single_btn = UIKit.button("单机模式", 300, 66)
     single_btn.pressed.connect(func(): App.goto("single"))
     bh.add_child(connect_btn)
     bh.add_child(single_btn)
     v.add_child(bh)
-    v.add_child(UIKit.label("单机模式无需服务器，直接 1v1 人机。", 16, UIKit.GREY, HORIZONTAL_ALIGNMENT_CENTER))
+    v.add_child(UIKit.label("连上服务器后会自动进入多人大厅；单机模式无需服务器。", 16, UIKit.GREY, HORIZONTAL_ALIGNMENT_CENTER))
 
 
 func _connect() -> void:
     if Net.connected:
-        App.goto("menu")
+        App.goto("lobby")
         return
     status_label.text = "连接中…"
     status_label.add_theme_color_override("font_color", UIKit.GOLD)
@@ -80,7 +84,7 @@ func _on_connected() -> void:
 
 
 func _on_failed() -> void:
-    status_label.text = "连接失败，请稍后重试"
+    status_label.text = "连接失败，正在等待重试…"
     status_label.add_theme_color_override("font_color", UIKit.RED)
     connect_btn.disabled = false
     single_btn.disabled = false

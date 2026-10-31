@@ -27,6 +27,11 @@ var current_screen: Control = null
 var active_screen: Control = null
 var _screens := {}
 
+var update_checker: Node = null
+var update_info: Dictionary = {}
+var _update_checked := false
+var _update_manual := false
+
 
 func _ready() -> void:
     var args := OS.get_cmdline_user_args()
@@ -75,7 +80,14 @@ func setup_client() -> void:
     Net.connected_to_server.connect(_on_connected)
     Net.connection_failed.connect(_on_connect_failed)
     Net.server_disconnected.connect(_on_server_disconnected)
+    var uc = load("res://client/update_check.gd")
+    if uc != null:
+        update_checker = uc.new()
+        update_checker.name = "UpdateChecker"
+        add_child(update_checker)
+        update_checker.checked.connect(_on_update_checked)
     _show("connect")
+    check_updates(false)
 
 
 func _apply_mobile_safe_area(root: Control) -> void:
@@ -114,6 +126,37 @@ func _show(screen_name: String) -> void:
 
 func goto(screen_name: String) -> void:
     _show(screen_name)
+
+
+func app_version() -> String:
+    return str(ProjectSettings.get_setting("application/config/version", "1.0.0"))
+
+
+func check_updates(manual: bool = false) -> void:
+    if update_checker == null:
+        return
+    if _update_checked and not manual:
+        return
+    _update_checked = true
+    _update_manual = manual
+    if manual:
+        _toast("正在检查更新…")
+    update_checker.check(app_version())
+
+
+func _on_update_checked(result: Dictionary) -> void:
+    update_info = result
+    var manual := _update_manual
+    if bool(result.get("ok", false)) and bool(result.get("newer", false)):
+        _toast("发现新版本 %s" % str(result.get("latest", "")))
+        if active_screen and active_screen.has_method("on_update_available"):
+            active_screen.on_update_available(update_info)
+    elif manual:
+        if bool(result.get("ok", false)):
+            _toast("已是最新版本 %s" % app_version())
+        else:
+            _toast("检查更新失败：无法连接更新源")
+    _update_manual = false
 
 
 func _on_connected() -> void:
@@ -155,6 +198,11 @@ func _on_net_message(from_id: int, data: Dictionary) -> void:
             account = data.get("account", {})
             if active_screen and active_screen.has_method("on_account"):
                 active_screen.on_account(account)
+        "rank":
+            account["rank"] = data.get("rank", {})
+            _toast("段位 %s  %s" % [str(data.get("label", "")), str(data.get("delta", ""))])
+            if active_screen and active_screen.has_method("on_rank"):
+                active_screen.on_rank(account.get("rank", {}), data)
         "friends":
             friends = data.get("friends", [])
             friend_requests = data.get("requests", [])
@@ -281,7 +329,8 @@ func start_single(cheat: bool) -> void:
     local_engine.setup([
         {"name": my_name, "team": 0, "avatar": int(account.get("avatar", 0))},
         {"name": "机灵鬼", "team": 1, "is_ai": true, "avatar": 3},
-    ], {"turn_time": 0, "cheat_mode": cheat, "mode": "single", "seed": randi()})
+    ], {"turn_time": 0, "cheat_mode": cheat, "mode": "single", "seed": randi(),
+        "ai_bias": AiMemory.snapshot()})
     pending_battle_start = {}
     battle_turn = {}
     goto("battle")

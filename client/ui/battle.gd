@@ -661,6 +661,7 @@ func _local_play(auto: bool, tlist: Array = []) -> void:
 func _local_after_reveal(result: Dictionary) -> void:
     _local_busy = true
     await get_tree().create_timer(2.4).timeout
+    _absorb_local_memory()
     if bool(result.get("finished", false)):
         _local_busy = false
         return
@@ -670,6 +671,17 @@ func _local_after_reveal(result: Dictionary) -> void:
         return
     _apply_turn_adv(adv)
     _local_busy = false
+
+
+func _absorb_local_memory() -> void:
+    if engine == null:
+        return
+    var obs := engine.take_observations()
+    if obs.is_empty():
+        return
+    AiMemory.absorb(obs)
+    AiMemory.flush()
+    engine.config["ai_bias"] = AiMemory.snapshot()
 
 
 func _apply_turn_adv(adv: Dictionary) -> void:

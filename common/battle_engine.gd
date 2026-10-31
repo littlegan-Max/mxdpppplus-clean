@@ -15,6 +15,8 @@ var finished := false
 var winner_team := -1
 
 var _rng := RandomNumberGenerator.new()
+# 真人的合法出牌记录，交给上层写入 AiMemory；AI 自己的选择不计入。
+var _observations: Array = []
 
 
 func setup(player_specs: Array, p_config: Dictionary = {}) -> void:
@@ -23,6 +25,7 @@ func setup(player_specs: Array, p_config: Dictionary = {}) -> void:
     round_no = 1
     finished = false
     winner_team = -1
+    _observations.clear()
     _rng.seed = int(p_config.get("seed", Time.get_ticks_usec()))
     for i in player_specs.size():
         var src: Dictionary = player_specs[i]
@@ -388,7 +391,20 @@ func submit(pid: int, card_id: String, target: int = -1, targets: Array = []) ->
         "targets": check["targets"],
         "cost": int(check["cost"]),
     }
+    if not bool(_p(pid)["is_ai"]):
+        _observations.append({
+            "card": card_id,
+            "hp_t": int(_p(pid)["hp_t"]),
+            "luck_t": int(_p(pid)["luck_t"]),
+            "round": round_no,
+        })
     return check
+
+
+func take_observations() -> Array:
+    var out := _observations.duplicate(true)
+    _observations.clear()
+    return out
 
 
 func needs_choice(pid: int) -> bool:
@@ -2059,6 +2075,7 @@ func _ai_score(pid: int, id: String, card: Dictionary, target: int, targets: Arr
     score += _ai_target_score(pid, id, card, target, targets, peek)
     score += _ai_combo_bonus(pl, id)
     score += _ai_peek_score(pid, id, card, target, targets, peek)
+    score += _ai_learn_bonus(pid, id)
     if cost > 0 and int(pl["luck_t"]) - cost < 10:
         score -= 4.0
     # 前期保留运做经济：运不够时不要急着把仅有的一点运花在进攻上。
@@ -2074,6 +2091,26 @@ func _ai_score(pid: int, id: String, card: Dictionary, target: int, targets: Arr
         elif kind == "defense":
             score -= push * 0.5
     return score
+
+
+func _ai_learn_bonus(pid: int, id: String) -> float:
+    # 真人打法偏好：同一局面下真人越爱用的技能，AI 给一点加分（上限 10，不影响规则判定）。
+    var bias = config.get("ai_bias", {})
+    if typeof(bias) != TYPE_DICTIONARY or bias.is_empty():
+        return 0.0
+    var pl := _p(pid)
+    var key := AiMemory.context_key(int(pl["hp_t"]), int(pl["luck_t"]), round_no)
+    var raw := 0.0
+    var ctxs = bias.get("ctx", {})
+    if typeof(ctxs) == TYPE_DICTIONARY:
+        var bucket = ctxs.get(key, {})
+        if typeof(bucket) == TYPE_DICTIONARY:
+            raw = float(bucket.get(id, 0.0))
+    if raw <= 0.0:
+        var gl = bias.get("global", {})
+        if typeof(gl) == TYPE_DICTIONARY:
+            raw = float(gl.get(id, 0.0))
+    return minf(raw, 10.0)
 
 
 func _ai_attack_value(pid: int, id: String, card: Dictionary, targets: Array, peek: Dictionary) -> float:

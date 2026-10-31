@@ -38,6 +38,9 @@ func _init() -> void:
     test_peach_removes_time()
     test_borrow_body()
     test_amulet_discount()
+    test_rank_placement()
+    test_rank_progress()
+    test_ai_memory_context()
     print("== %d checks, %d failures ==" % [checks, failures])
     quit(1 if failures > 0 else 0)
 
@@ -471,3 +474,42 @@ func test_amulet_discount() -> void:
     e.submit(1, "amulet", 0)
     e.resolve_round()
     check(e.players[1]["hp_t"] == -5, "1-cost kaiser not blocked by 2~3 amulet", str(e.players[1]["hp_t"]))
+
+
+func test_rank_placement() -> void:
+    var r := Rank.default_rank()
+    check(Rank.label(r) == "青铜 III · 0 星", "default rank label", Rank.label(r))
+    for i in 5:
+        r = Rank.apply_result(r, true)["rank"]
+    check(int(r["games"]) == 5 and int(r["wins"]) == 5, "placement 5 wins counted")
+    check(bool(r["placed"]), "placed after 5 games")
+    check(Rank.label(r) == "黄金 II · 1 星", "5 wins places at gold II", Rank.label(r))
+    check(Rank.win_rate_text(r) == "胜率 100%（5/5）", "win rate text", Rank.win_rate_text(r))
+
+
+func test_rank_progress() -> void:
+    var r := Rank.default_rank()
+    r["games"] = 5
+    r["wins"] = 2
+    r["placed"] = true
+    r["tier"] = 0
+    r["div"] = 0
+    r["stars"] = 1
+    var win := Rank.apply_result(r, true)
+    check(int(win["rank"]["stars"]) == 2, "win adds a star", str(win["rank"]["stars"]))
+    var loss1 := Rank.apply_result(win["rank"], false)
+    check(int(loss1["rank"]["stars"]) == 1, "loss removes a star", str(loss1["rank"]["stars"]))
+    var loss2 := Rank.apply_result(loss1["rank"], false)
+    check(int(loss2["rank"]["stars"]) == 0, "second loss empties stars", str(loss2["rank"]["stars"]))
+    var floor_loss := Rank.apply_result(loss2["rank"], false)
+    check(int(floor_loss["rank"]["tier"]) == 0 and int(floor_loss["rank"]["div"]) == 0,
+          "bronze III 0 star protected", Rank.label(floor_loss["rank"]))
+
+
+func test_ai_memory_context() -> void:
+    check(AiMemory.context_key(10, 0, 1) == "early|ok|poor", "ctx early/poor",
+          AiMemory.context_key(10, 0, 1))
+    check(AiMemory.context_key(3, 80, 9) == "late|low|rich", "ctx late/low/rich",
+          AiMemory.context_key(3, 80, 9))
+    check(AiMemory.context_key(8, 40, 5) == "mid|ok|mid", "ctx mid",
+          AiMemory.context_key(8, 40, 5))

@@ -50,6 +50,9 @@ func get_or_create(hwid: String) -> Dictionary:
     if accounts.has(hwid):
         var a: Dictionary = accounts[hwid]
         a["avatar"] = _avatar_for(hwid)
+        if not a.has("rank"):
+            a["rank"] = Rank.default_rank()
+            save()
         return a
     var code := _new_code()
     var acc := {
@@ -60,6 +63,7 @@ func get_or_create(hwid: String) -> Dictionary:
         "requests_in": [],
         "requests_out": [],
         "avatar": _avatar_for(hwid),
+        "rank": Rank.default_rank(),
     }
     accounts[hwid] = acc
     codes[code] = hwid

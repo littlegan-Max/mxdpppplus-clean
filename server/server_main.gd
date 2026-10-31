@@ -52,6 +52,7 @@ func _account_payload(acc: Dictionary) -> Dictionary:
         "name": str(acc.get("name", "")),
         "friend_code": str(acc.get("friend_code", "")),
         "avatar": int(acc.get("avatar", 0)),
+        "rank": Rank.normalize(acc.get("rank", {})),
     }
 
 
@@ -435,7 +436,8 @@ func _start_battle(room: Dictionary, total: int) -> void:
     engine.setup(specs, {"friendly_fire": bool(room["friendly_fire"]),
                          "turn_time": int(room["turn_time"]),
                          "cheat_mode": bool(room["cheat_mode"]),
-                         "mode": "online", "seed": randi()})
+                         "mode": "online", "seed": randi(),
+                         "ai_bias": AiMemory.snapshot()})
     var battle := {
         "room_id": str(room["id"]),
         "engine": engine,
@@ -473,6 +475,7 @@ func _begin_turn(battle: Dictionary, pre_events: Array) -> void:
     if bool(battle.get("ended", false)):
         return
     var engine: BattleEngine = battle["engine"]
+    _absorb_ai_memory(battle)
     battle["phase"] = "input"
     battle["token"] = int(battle["token"]) + 1
     battle["round"] = engine.round_no
@@ -505,6 +508,17 @@ func _active_human_count(battle: Dictionary) -> int:
             continue
         n += 1
     return n
+
+
+func _absorb_ai_memory(battle: Dictionary) -> void:
+    # 把上一回合真人出牌喂给 AI 学习库，并刷新本回合的偏好权重。
+    var engine: BattleEngine = battle["engine"]
+    var obs := engine.take_observations()
+    if obs.is_empty():
+        return
+    AiMemory.absorb(obs)
+    engine.config["ai_bias"] = AiMemory.snapshot()
+    battle["learned"] = int(battle.get("learned", 0)) + obs.size()
 
 
 func _submit_ai_all(battle: Dictionary, peek: Dictionary) -> void:
@@ -658,17 +672,46 @@ func _maybe_resolve(battle: Dictionary) -> void:
             _begin_turn(b, adv["events"]))
 
 
+func _apply_ranks(battle: Dictionary, result: Dictionary) -> void:
+    # 段位只统计真人 PvP：至少 2 名真人参战，人机/单机对局不计。
+    var humans: Dictionary = battle["human_pids"]
+    var winner := int(result.get("winner_team", -1))
+    if winner < 0 or humans.size() < 2:
+        return
+    var engine: BattleEngine = battle["engine"]
+    var changed := false
+    for pid in humans.keys():
+        var peer := int(humans[pid])
+        var hwid := str(online.get(peer, ""))
+        if hwid == "":
+            continue
+        var acc := _acc_by_hwid(hwid)
+        if acc.is_empty():
+            continue
+        var win := int(engine.players[int(pid)]["team"]) == winner
+        var res := Rank.apply_result(acc.get("rank", {}), win)
+        acc["rank"] = res["rank"]
+        changed = true
+        _send(peer, {"t": "rank", "rank": res["rank"], "delta": str(res["delta"]),
+                     "label": Rank.label(res["rank"]), "placed_now": bool(res["placed_now"])})
+    if changed:
+        store.save()
+
+
 func _finish_battle(battle: Dictionary, result: Dictionary) -> void:
     if bool(battle.get("ended", false)):
         return
     battle["ended"] = true
     battle["phase"] = "ended"
     var rid := str(battle["room_id"])
+    _absorb_ai_memory(battle)
+    AiMemory.flush()
     for peer in battle["peer_pids"].keys():
         _send(int(peer), {"t": "battle_end", "room_id": rid,
                           "winner_team": int(result.get("winner_team", -1)),
                           "players": result.get("players", []),
                           "events": result.get("events", [])})
+    _apply_ranks(battle, result)
     var timer := get_tree().create_timer(4.0)
     timer.timeout.connect(func():
         if not battles.has(rid):

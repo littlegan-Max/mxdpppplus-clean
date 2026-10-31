@@ -2,6 +2,8 @@ extends Control
 
 var name_label: Label
 var code_label: Label
+var rank_label: Label
+var rate_label: Label
 var friend_badge: Label
 var avatar_rect: TextureRect
 
@@ -11,6 +13,8 @@ func _ready() -> void:
     UIKit.dim(self, 0.35)
     _build()
     _refresh()
+    if bool(App.update_info.get("newer", false)):
+        call_deferred("on_update_available", App.update_info)
 
 
 func _build() -> void:
@@ -51,6 +55,10 @@ func _build() -> void:
     lv.add_child(name_label)
     code_label = UIKit.label("好友码 —", 22, UIKit.CYAN, HORIZONTAL_ALIGNMENT_CENTER)
     lv.add_child(code_label)
+    rank_label = UIKit.label("段位 —", 30, UIKit.GOLD, HORIZONTAL_ALIGNMENT_CENTER)
+    lv.add_child(rank_label)
+    rate_label = UIKit.label("胜率 —", 18, UIKit.GREY, HORIZONTAL_ALIGNMENT_CENTER)
+    lv.add_child(rate_label)
     lv.add_child(UIKit.label("硬件码账号：换设备会生成新账号\n好友与房间不跨设备同步", 16, UIKit.GREY, HORIZONTAL_ALIGNMENT_CENTER))
     var sp := Control.new()
     sp.custom_minimum_size = Vector2(0, 30)
@@ -86,6 +94,9 @@ func _build() -> void:
     var rename := UIKit.button("改 名", 460, 72, 24)
     rename.pressed.connect(func(): App.goto("name"))
     right.add_child(rename)
+    var update := UIKit.button("检查更新", 460, 72, 24)
+    update.pressed.connect(func(): App.check_updates(true))
+    right.add_child(update)
     var quit := UIKit.button("退 出", 460, 72, 24)
     quit.pressed.connect(func():
         Net.disconnect_now()
@@ -93,6 +104,9 @@ func _build() -> void:
     right.add_child(quit)
     var tip := UIKit.label("像素卡牌 · 2~8 人双队 · 权威服务端", 16, UIKit.GREY, HORIZONTAL_ALIGNMENT_CENTER)
     right.add_child(tip)
+    var learned := AiMemory.total()
+    if learned > 0:
+        right.add_child(UIKit.label("AI 已从真人出牌中学习 %d 次" % learned, 15, UIKit.DIM, HORIZONTAL_ALIGNMENT_CENTER))
 
 
 func _refresh() -> void:
@@ -102,6 +116,9 @@ func _refresh() -> void:
     name_label.text = n if n != "" else "未命名"
     var code := str(App.account.get("friend_code", ""))
     code_label.text = "好友码  %s" % (code if code != "" else "—")
+    var rank: Dictionary = App.account.get("rank", {})
+    rank_label.text = Rank.label(rank)
+    rate_label.text = Rank.win_rate_text(rank)
     avatar_rect.texture = UIKit.art("avatar_%d.png" % int(App.account.get("avatar", 0)))
     var reqs := App.friend_requests.size()
     friend_badge.visible = reqs > 0
@@ -111,6 +128,25 @@ func _refresh() -> void:
 
 func on_account(_account: Dictionary) -> void:
     _refresh()
+
+
+func on_rank(_rank: Dictionary, _data: Dictionary) -> void:
+    _refresh()
+
+
+func on_update_available(info: Dictionary) -> void:
+    if not bool(info.get("newer", false)):
+        return
+    var note := str(info.get("notes", ""))
+    var body := "最新版本：%s\n当前版本：%s" % [str(info.get("latest", "")), App.app_version()]
+    if note != "":
+        body += "\n\n" + note
+    UIKit.confirm(self, "发现新版本", body,
+        func():
+            var url := str(info.get("url", ""))
+            if url != "":
+                OS.shell_open(url),
+        func(): pass)
 
 
 func on_friends(_list: Array) -> void:

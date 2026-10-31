@@ -1,0 +1,10 @@
+.godot/
+.uploads/
+dist/*.zip
+dist/*.exe
+dist/*.x86_64
+dist/*.pck
+*.tmp
+dist/
+client/server_target.gd
+启动联机.cmd

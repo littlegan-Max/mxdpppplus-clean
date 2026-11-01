@@ -231,7 +231,8 @@ func _on_net_message(from_id: int, data: Dictionary) -> void:
             room = data.get("room", {})
             if active_screen and active_screen.has_method("on_room"):
                 active_screen.on_room(room)
-            elif active_screen and active_screen.name == "Lobby":
+            elif active_screen and active_screen.name != "Battle" and str(room.get("state", "")) == "lobby":
+                # 接受邀请或加入房间后服务端只发 room；除战斗界面外都直接进房间。
                 goto("room")
         "room_left":
             room.clear()

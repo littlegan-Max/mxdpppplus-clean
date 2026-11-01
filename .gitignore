@@ -6,6 +6,7 @@ dist/*.x86_64
 dist/*.pck
 *.tmp
 dist/
+backup/
 client/server_target.gd
 client/server_target.gd.uid
 启动联机.cmd

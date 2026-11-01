@@ -318,15 +318,26 @@ func device_id() -> String:
 
 
 func server_target() -> Dictionary:
-    # 连接目标来自未开源的 client/server_target.gd；
-    # 开源构建缺少该文件时回退到本机地址。
+    # 连接地址固定在私有配置里，玩家无法修改；命令行参数仅供本地测试。
+    var host := ""
+    var port := 0
+    for args in [OS.get_cmdline_user_args(), OS.get_cmdline_args()]:
+        for a in args:
+            var s := str(a)
+            if s.begins_with("--host="):
+                host = s.substr(7).strip_edges()
+            elif s.begins_with("--port="):
+                port = int(s.substr(7))
+    if host != "":
+        return {"host": host, "port": port if port > 0 else 7777}
+
     if ResourceLoader.exists("res://client/server_target.gd"):
         var script = load("res://client/server_target.gd")
         if script != null:
             var t = script.target()
             if typeof(t) == TYPE_DICTIONARY and str(t.get("host", "")) != "":
                 return {"host": str(t["host"]), "port": int(t.get("port", 7777))}
-    return {"host": "127.0.0.1", "port": 7777}
+    return {"host": "", "port": 7777}
 
 
 func start_single(cheat: bool) -> void:

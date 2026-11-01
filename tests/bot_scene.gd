@@ -4,16 +4,22 @@ extends Node
 ## godot --headless --path . res://tests/bot_scene.tscn -- --no-ui --port=7802
 
 var inbox: Array = []
+var host := "127.0.0.1"
 var port := 7801
 var max_players := 2
+var private_room := false
 
 
 func _ready() -> void:
     for a in OS.get_cmdline_user_args():
-        if str(a).begins_with("--port="):
+        if str(a).begins_with("--host="):
+            host = str(a).substr(7)
+        elif str(a).begins_with("--port="):
             port = int(str(a).substr(7))
         elif str(a).begins_with("--max="):
             max_players = int(str(a).substr(6))
+        elif str(a) == "--private":
+            private_room = true
     Net.msg_received.connect(func(_from, data): inbox.append(data))
     _run()
 
@@ -31,7 +37,7 @@ func _wait_for(kind: String, ms: int = 5000) -> Dictionary:
 
 
 func _run() -> void:
-    var err := Net.connect_to("127.0.0.1", port)
+    var err := Net.connect_to(host, port)
     if err != OK:
         print("BOT FAIL connect err=", err)
         get_tree().quit(1)
@@ -55,7 +61,7 @@ func _run() -> void:
     Net.send_to_server({"t": "set_name", "name": "机器人" + str(Time.get_ticks_msec() % 1000)})
     var acc := await _wait_for("account", 3000)
     print("BOT name ack=", acc.get("account", {}).get("name", ""))
-    Net.send_to_server({"t": "room_create", "public": true, "max_players": max_players,
+    Net.send_to_server({"t": "room_create", "public": not private_room, "max_players": max_players,
                         "ai_fill": true, "turn_time": 3, "friendly_fire": false,
                         "cheat_mode": true})
     var room_msg := await _wait_for("room", 5000)

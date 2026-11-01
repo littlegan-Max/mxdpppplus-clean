@@ -24,7 +24,7 @@ cp run_server.sh "$DIST/server-linux/"
 # Full source package (no git / uploads / dist)
 rm -rf "$DIST/source"
 mkdir -p "$DIST/source"
-rsync -a --exclude .git --exclude .uploads --exclude dist --exclude .godot "$ROOT/" "$DIST/source/"
+rsync -a --exclude .git --exclude .uploads --exclude dist --exclude .godot --exclude backup "$ROOT/" "$DIST/source/"
 ( cd "$DIST/source" && zip -q -r "$DIST/mxdpppplus-source.zip" . )
 
 ls -lh "$DIST"/*.zip

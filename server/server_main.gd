@@ -150,6 +150,10 @@ func _handle_hello(peer: int, data: Dictionary) -> void:
     var old := int(hwid_peer.get(hwid, 0))
     if old != 0 and old != peer:
         _send(old, {"t": "kicked", "msg": "账号在另一处登录"})
+        # 同一账号重连时，旧会话可能还留在房间里；先清理旧房间成员，避免幽灵房间。
+        var old_room := _room_of_peer(old)
+        if not old_room.is_empty():
+            _remove_member(old_room, old, "disconnect")
         online.erase(old)
     online[peer] = hwid
     hwid_peer[hwid] = peer
